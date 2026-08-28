@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app/app-shell";
 import { requireUser } from "@/lib/authorize";
 import { countMyUnread } from "@/lib/notifications";
+import { safeRead } from "@/lib/safe-read";
 import { listMyBoards, listMyWorkspaces } from "@/lib/queries";
 
 /**
@@ -18,9 +19,13 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (!user) redirect("/api/session/expired");
 
   const [workspaces, boards, unreadCount] = await Promise.all([
+    // Core navigation: if these fail the shell genuinely cannot render, so let
+    // them throw rather than silently showing an empty sidebar.
     listMyWorkspaces(),
     listMyBoards(),
-    countMyUnread(),
+    // The bell is decoration. Inside a Promise.all an unguarded rejection here
+    // would 500 every authenticated page for the sake of a badge.
+    safeRead("layout.unreadCount", () => countMyUnread(), 0),
   ]);
 
   return (

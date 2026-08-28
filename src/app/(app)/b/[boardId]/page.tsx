@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { listAssignableMembersFor } from "@/lib/core/members";
 import { BoardView } from "@/components/board/board-view";
 import { ShareDialog } from "@/components/board/share-dialog";
+import { safeRead } from "@/lib/safe-read";
 import { db } from "@/db";
 import { boards } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -42,19 +43,30 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
   const { boardId } = await params;
   const { board, workspace, lists, role } = await loadBoard(boardId);
   const canWrite = role !== "viewer";
-  const members = await listAssignableMembersFor(workspace.id);
+  // Both of these decorate the board rather than constitute it, so a failure
+  // degrades one control instead of 500ing the whole page.
+  const members = await safeRead(
+    "board.assignableMembers",
+    () => listAssignableMembersFor(workspace.id),
+    [],
+  );
 
   // The share token is read here — already inside the authorised board context
   // — rather than widening BoardContext for one screen.
-  const [shareRow] = await db
-    .select({ publicToken: boards.publicToken })
-    .from(boards)
-    .where(eq(boards.id, board.id))
-    .limit(1);
-  const origin = (await headers()).get("origin") ?? "";
-  const shareUrl = shareRow?.publicToken
-    ? `${origin}/p/${shareRow.publicToken}`
-    : null;
+  const shareUrl = await safeRead(
+    "board.shareToken",
+    async () => {
+      const [shareRow] = await db
+        .select({ publicToken: boards.publicToken })
+        .from(boards)
+        .where(eq(boards.id, board.id))
+        .limit(1);
+      if (!shareRow?.publicToken) return null;
+      const origin = (await headers()).get("origin") ?? "";
+      return `${origin}/p/${shareRow.publicToken}`;
+    },
+    null,
+  );
 
   return (
     <div className="flex h-dvh flex-col md:h-dvh">

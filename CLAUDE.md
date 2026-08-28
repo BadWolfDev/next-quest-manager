@@ -107,6 +107,19 @@ user" would leak identity between concurrent requests on a warm server.
 
 Mutations from MCP write `source: "mcp"` into the activity entry's data.
 
+**Migrations ship with the code that needs them — never by hand.** Vercel runs
+`vercel-build`, which applies pending migrations and only then builds; a failed
+migration fails the build. Never assume someone will migrate manually after a
+deploy, and never merge a schema change without its generated SQL committed
+alongside. Self-hosted containers get the same guarantee from
+`npm run start:migrate`.
+
+The deploy step is gated on `VERCEL=1` **and** a database URL, so `npm run build`
+locally is guaranteed not to open a connection. It prefers
+`DATABASE_URL_UNPOOLED` because migrations misbehave through a transaction
+pooler. Preview deploys migrate the *linked* database — fine while it is one
+developer's project, a branch database once it is a team.
+
 **Migrations are additive. Production exists.** From the shared-workspaces phase
 onward there is a deployed instance with real data. Generate a new migration
 (`npm run db:generate`) and commit it; never rewrite `0000` or an already-applied
@@ -168,6 +181,17 @@ there. Keeping the two apart is the structural guarantee that a share link can
 never reach a mutation: there is no code path where a token satisfies a
 membership check. Public payloads must carry no emails and no user ids; check
 the serialized RSC output, not just the rendered UI.
+
+**One feature must not take down a page.** Reads that *decorate* a page — the
+notification count, a board's share token, the assignable-member list — go
+through `safeRead()` (`lib/safe-read.ts`), which logs and falls back. This is not
+theoretical: an unguarded `select public_token` against an un-migrated database
+500ed the entire board page, and the unread-count read sat inside a
+`Promise.all` in the app shell where one rejection would have 500ed every
+authenticated page.
+
+Core data stays unguarded on purpose. If a board's lists fail to load, an honest
+error beats rendering an empty board.
 
 **Soft deletes.** `archived_at` rather than `DELETE`, so history survives.
 Queries must filter `isNull(archivedAt)` unless they deliberately want archives.

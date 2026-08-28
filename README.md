@@ -86,13 +86,32 @@ You'll be asked for two environment variables:
 | `DATABASE_URL` | A Postgres database — [Neon](https://neon.tech) has a free tier and pairs well with Vercel. Use the **pooled** connection string. |
 | `AUTH_SECRET` | Generate one: `openssl rand -base64 32` |
 
-Then run the migrations once against the new database:
+**Migrations run automatically on deploy.** Vercel picks up the `vercel-build`
+script, which applies pending migrations and only then runs `next build`. You do
+not need to migrate by hand, and there is no build-command to configure.
+
+- It runs only when `VERCEL=1` *and* a database URL is present, so a plain local
+  `npm run build` never touches a database.
+- It prefers `DATABASE_URL_UNPOOLED` (Neon's direct endpoint) when the Neon
+  integration provides it — migrations through a transaction pooler can
+  misbehave. The app still uses the pooled URL at runtime.
+- **If a migration fails the build fails.** Code is never deployed ahead of its
+  schema. (That is exactly the incident this replaced: a deploy shipped a column
+  its migration had not created, and every board page 500ed until someone
+  migrated by hand.)
+
+> **Preview deploys share the linked database.** Every preview applies the same
+> migrations to it. Migrations are idempotent, so running them repeatedly is
+> safe — but a preview that adds a column changes the database production is
+> using. For a team, point previews at a Neon branch database instead (Neon's
+> Vercel integration can create one per branch).
+
+To migrate a remote database by hand anyway — a one-off backfill, or a non-Vercel
+host — the safety guard needs explicit consent:
 
 ```bash
 DATABASE_URL='<your production url>' NQM_ALLOW_REMOTE_MIGRATE=1 npm run db:migrate
 ```
-
-(Or make the Vercel build command `npm run db:migrate && npm run build`.)
 
 ### b) Docker self-host
 
@@ -103,9 +122,15 @@ cd next-quest-manager
 docker compose up -d db          # Postgres 17 on :5432
 cp .env.example .env             # then set AUTH_SECRET
 npm install
-npm run db:migrate
-npm run build && npm run start
+npm run build
+npm run start:migrate            # migrates, then serves
 ```
+
+`docker-compose.yml` ships the **database only** — there is no app container, so
+nothing applies migrations for you the way Vercel does. Use `npm run start:migrate`
+(equivalent to `npm run db:migrate && npm run start`) as your container command or
+process entrypoint, so schema and code can never drift apart. `npm run start` on
+its own does **not** migrate.
 
 Put a TLS terminator in front of it — session cookies are `Secure` in
 production.
@@ -230,7 +255,9 @@ Both required variables are validated at startup with an actionable error.
 | Command | What it does |
 | ------- | ------------ |
 | `npm run dev` | Dev server |
-| `npm run build` | Production build (typechecks and lints) |
+| `npm run build` | Production build (typechecks and lints). Never touches the database. |
+| `npm run vercel-build` | What Vercel runs: migrate (on Vercel only), then build |
+| `npm run start:migrate` | Migrate, then serve — for self-hosted containers |
 | `npm run start` | Serve the production build |
 | `npm run lint` / `npm run typecheck` | ESLint / `tsc --noEmit` |
 | `npm run db:generate` | Diff the schema into a new SQL migration |
