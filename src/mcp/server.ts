@@ -1,5 +1,7 @@
 import "server-only";
 
+import { logError } from "@/lib/log-error";
+
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -142,7 +144,7 @@ async function guard<T>(run: () => Promise<T>) {
           .join("; ")}`,
       };
     }
-    console.error("[mcp] tool failed:", error);
+    logError("[mcp] tool failed:", error);
     return { ok: false as const, message: "The operation failed." };
   }
 }

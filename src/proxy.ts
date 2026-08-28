@@ -20,7 +20,7 @@ const PUBLIC_PATHS = new Set(["/", "/login", "/signup"]);
  * a shareable link. The page itself decides what to show; joining still
  * requires an authenticated session.
  */
-const PUBLIC_PREFIXES = ["/invite/"];
+const PUBLIC_PREFIXES = ["/invite/", "/p/", "/api/session/"];
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;
@@ -52,6 +52,6 @@ export const config = {
      * were matched here, every MCP request would be answered with a 307 to
      * /login instead of the 401 the protocol expects.
      */
-    "/((?!api/auth|api/mcp|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api/auth|api/mcp|api/public|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

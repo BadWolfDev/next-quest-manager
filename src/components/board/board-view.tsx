@@ -317,6 +317,17 @@ export function BoardView({
         <ActivityPanel boardId={boardId} />
       </div>
     <DndContext
+      /*
+        A stable id, not dnd-kit's default.
+        `useUniqueId` falls back to a module-level counter that keeps
+        incrementing on the server for every board rendered by that worker,
+        while the browser starts again from 0 — so the `aria-describedby` it
+        puts on every sortable element mismatches on hydration ("DndDescribedBy-3"
+        vs "-0"). React can't patch attributes, so each board load reported a
+        hydration error carrying a full component-stack diff. Deriving the id
+        from the board makes server and client agree.
+      */
+      id={`board-${boardId}`}
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={handleDragStart}
@@ -338,10 +349,12 @@ export function BoardView({
         {/* One list per viewport with snap points on phones; free horizontal
             scroll from `sm` up. */}
         <ol className="flex h-full snap-x snap-mandatory items-start gap-4 overflow-x-auto pb-2 sm:snap-none">
-          {board.map((list) => (
+          {board.map((list, index) => (
             <SortableList
               key={list.id}
               list={list}
+              index={index}
+              boardId={boardId}
               members={members}
               canWrite={canWrite}
             />

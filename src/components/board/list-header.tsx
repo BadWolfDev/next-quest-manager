@@ -109,7 +109,7 @@ export function ListHeader({
         type="button"
         disabled={!canWrite}
         onClick={() => setEditing(true)}
-        className="hover:bg-accent/60 focus-visible:ring-ring/60 min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-sm font-semibold focus-visible:outline-none focus-visible:ring-2"
+        className="nqm-skin-list-title hover:bg-accent/60 focus-visible:ring-ring/60 min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-sm font-semibold focus-visible:outline-none focus-visible:ring-2"
         title="Click to rename"
       >
         {name}

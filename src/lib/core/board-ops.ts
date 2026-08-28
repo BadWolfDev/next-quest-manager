@@ -7,7 +7,10 @@ import { db } from "@/db";
 import {
   boards,
   cardAssignees,
+  cardLabels,
   cards,
+  checklistItems,
+  checklists,
   comments,
   labels,
   lists,
@@ -241,7 +244,7 @@ export async function updateCard(
     dueDate?: Date | null;
   },
   { actor, source }: OpContext = {},
-): Promise<void> {
+): Promise<{ boardId: string }> {
   const ctx = await requireCardAccess(input.cardId, "member", actor);
 
   const patch: Record<string, unknown> = { updatedAt: new Date() };
@@ -271,12 +274,14 @@ export async function updateCard(
       },
     });
   });
+
+  return { boardId: ctx.board.id };
 }
 
 export async function archiveCard(
   input: { cardId: string },
   { actor, source }: OpContext = {},
-): Promise<void> {
+): Promise<{ boardId: string }> {
   const ctx = await requireCardAccess(input.cardId, "member", actor);
 
   await db.transaction(async (tx) => {
@@ -304,6 +309,8 @@ export async function archiveCard(
       data: { title: card.title, ...sourceData(source) },
     });
   });
+
+  return { boardId: ctx.board.id };
 }
 
 /**
@@ -808,4 +815,338 @@ export async function assigneesForBoard(boardId: string) {
     byCard.set(row.cardId, bucket);
   }
   return byCard;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Labels                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Create a label on a board.
+ *
+ * Labels belong to a board, so the board is authorised and the new row's
+ * `board_id` comes from the authorised context — never from the client.
+ */
+export async function createLabel(
+  input: { boardId: string; name: string; color: string },
+  { actor, source }: OpContext = {},
+): Promise<{ labelId: string }> {
+  const ctx = await requireBoardAccess(input.boardId, "member", actor);
+
+  const labelId = await db.transaction(async (tx) => {
+    const [label] = await tx
+      .insert(labels)
+      .values({
+        boardId: ctx.board.id,
+        name: input.name,
+        color: input.color,
+      })
+      .returning({ id: labels.id });
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      actorId: ctx.user.id,
+      type: "label.created",
+      data: { labelId: label.id, name: input.name, ...sourceData(source) },
+    });
+
+    return label.id;
+  });
+
+  return { labelId };
+}
+
+/**
+ * Attach or detach a board label on a card.
+ *
+ * The label must belong to the *same board* as the card. That check is what
+ * stops a caller pasting a label id from another board they happen to be a
+ * member of onto this card.
+ */
+export async function setCardLabel(
+  input: { cardId: string; labelId: string; attached: boolean },
+  { actor, source }: OpContext = {},
+): Promise<{ boardId: string }> {
+  const ctx = await requireCardAccess(input.cardId, "member", actor);
+
+  await db.transaction(async (tx) => {
+    const [label] = await tx
+      .select({ id: labels.id, name: labels.name })
+      .from(labels)
+      .where(
+        and(eq(labels.id, input.labelId), eq(labels.boardId, ctx.board.id)),
+      )
+      .limit(1);
+
+    if (!label) {
+      throw new AuthorizationError("That label does not belong to this board.");
+    }
+
+    if (input.attached) {
+      await tx
+        .insert(cardLabels)
+        .values({ cardId: input.cardId, labelId: input.labelId })
+        .onConflictDoNothing();
+    } else {
+      await tx
+        .delete(cardLabels)
+        .where(
+          and(
+            eq(cardLabels.cardId, input.cardId),
+            eq(cardLabels.labelId, input.labelId),
+          ),
+        );
+    }
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId: input.cardId,
+      actorId: ctx.user.id,
+      type: input.attached ? "card.labelled" : "card.unlabelled",
+      data: { labelId: input.labelId, name: label.name, ...sourceData(source) },
+    });
+  });
+
+  return { boardId: ctx.board.id };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Checklists                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export async function createChecklist(
+  input: { cardId: string; title: string },
+  { actor, source }: OpContext = {},
+): Promise<{ checklistId: string; boardId: string }> {
+  const ctx = await requireCardAccess(input.cardId, "member", actor);
+
+  const checklistId = await db.transaction(async (tx) => {
+    const [last] = await tx
+      .select({ position: checklists.position })
+      .from(checklists)
+      .where(eq(checklists.cardId, input.cardId))
+      .orderBy(desc(checklists.position))
+      .limit(1);
+
+    const [row] = await tx
+      .insert(checklists)
+      .values({
+        cardId: input.cardId,
+        title: input.title,
+        position: generateKeyBetween(last?.position ?? null, null),
+      })
+      .returning({ id: checklists.id });
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId: input.cardId,
+      actorId: ctx.user.id,
+      type: "checklist.created",
+      data: { checklistId: row.id, title: input.title, ...sourceData(source) },
+    });
+
+    return row.id;
+  });
+
+  return { checklistId, boardId: ctx.board.id };
+}
+
+/**
+ * Resolve a checklist to its card, authorising the card.
+ *
+ * Every checklist-item operation goes through this rather than trusting a
+ * `cardId` from the client alongside a `checklistId` — the pairing itself is
+ * what must be verified.
+ */
+async function authorizeChecklist(checklistId: string, actor?: Actor) {
+  const [row] = await db
+    .select({ cardId: checklists.cardId })
+    .from(checklists)
+    .where(eq(checklists.id, checklistId))
+    .limit(1);
+
+  if (!row) throw new AuthorizationError();
+  const ctx = await requireCardAccess(row.cardId, "member", actor);
+  return { ctx, cardId: row.cardId };
+}
+
+export async function addChecklistItem(
+  input: { checklistId: string; content: string },
+  { actor, source }: OpContext = {},
+): Promise<{ itemId: string; boardId: string }> {
+  const { ctx, cardId } = await authorizeChecklist(input.checklistId, actor);
+
+  const itemId = await db.transaction(async (tx) => {
+    const [last] = await tx
+      .select({ position: checklistItems.position })
+      .from(checklistItems)
+      .where(eq(checklistItems.checklistId, input.checklistId))
+      .orderBy(desc(checklistItems.position))
+      .limit(1);
+
+    const [row] = await tx
+      .insert(checklistItems)
+      .values({
+        checklistId: input.checklistId,
+        content: input.content,
+        position: generateKeyBetween(last?.position ?? null, null),
+      })
+      .returning({ id: checklistItems.id });
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId,
+      actorId: ctx.user.id,
+      type: "checklist_item.created",
+      data: { itemId: row.id, ...sourceData(source) },
+    });
+
+    return row.id;
+  });
+
+  return { itemId, boardId: ctx.board.id };
+}
+
+/**
+ * Resolve a checklist item to its card via its checklist, authorising the card.
+ * The join is the authorization: an item id belonging to someone else's card
+ * simply does not come back.
+ */
+async function authorizeChecklistItem(itemId: string, actor?: Actor) {
+  const [row] = await db
+    .select({ cardId: checklists.cardId, checklistId: checklists.id })
+    .from(checklistItems)
+    .innerJoin(checklists, eq(checklists.id, checklistItems.checklistId))
+    .where(eq(checklistItems.id, itemId))
+    .limit(1);
+
+  if (!row) throw new AuthorizationError();
+  const ctx = await requireCardAccess(row.cardId, "member", actor);
+  return { ctx, cardId: row.cardId };
+}
+
+export async function toggleChecklistItem(
+  input: { itemId: string; completed: boolean },
+  { actor, source }: OpContext = {},
+): Promise<{ boardId: string }> {
+  const { ctx, cardId } = await authorizeChecklistItem(input.itemId, actor);
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(checklistItems)
+      .set({ completed: input.completed })
+      .where(eq(checklistItems.id, input.itemId));
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId,
+      actorId: ctx.user.id,
+      type: "checklist_item.toggled",
+      data: {
+        itemId: input.itemId,
+        completed: input.completed,
+        ...sourceData(source),
+      },
+    });
+  });
+
+  return { boardId: ctx.board.id };
+}
+
+export async function deleteChecklistItem(
+  input: { itemId: string },
+  { actor, source }: OpContext = {},
+): Promise<{ boardId: string }> {
+  const { ctx, cardId } = await authorizeChecklistItem(input.itemId, actor);
+
+  await db.transaction(async (tx) => {
+    await tx.delete(checklistItems).where(eq(checklistItems.id, input.itemId));
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId,
+      actorId: ctx.user.id,
+      type: "checklist_item.deleted",
+      data: { itemId: input.itemId, ...sourceData(source) },
+    });
+  });
+
+  return { boardId: ctx.board.id };
+}
+
+/** Everything the card detail modal renders, in one authorised read. */
+export async function getCardModalData(cardId: string, actor?: Actor) {
+  const detail = await getCardDetail(cardId, actor);
+
+  const [boardLabels, attached, lists_, checklistRows] = await Promise.all([
+    db
+      .select({ id: labels.id, name: labels.name, color: labels.color })
+      .from(labels)
+      .where(eq(labels.boardId, detail.board.id))
+      .orderBy(asc(labels.createdAt)),
+    db
+      .select({ labelId: cardLabels.labelId })
+      .from(cardLabels)
+      .where(eq(cardLabels.cardId, cardId)),
+    db
+      .select({ id: lists.id, name: lists.name })
+      .from(lists)
+      .where(and(eq(lists.boardId, detail.board.id), isNull(lists.archivedAt)))
+      .orderBy(asc(lists.position)),
+    db
+      .select({
+        id: checklists.id,
+        title: checklists.title,
+        position: checklists.position,
+      })
+      .from(checklists)
+      .where(eq(checklists.cardId, cardId))
+      .orderBy(asc(checklists.position)),
+  ]);
+
+  const items = checklistRows.length
+    ? await db
+        .select({
+          id: checklistItems.id,
+          checklistId: checklistItems.checklistId,
+          content: checklistItems.content,
+          completed: checklistItems.completed,
+          position: checklistItems.position,
+        })
+        .from(checklistItems)
+        .innerJoin(checklists, eq(checklists.id, checklistItems.checklistId))
+        .where(eq(checklists.cardId, cardId))
+        .orderBy(asc(checklistItems.position))
+    : [];
+
+  const byChecklist = new Map<string, typeof items>();
+  for (const item of items) {
+    const bucket = byChecklist.get(item.checklistId) ?? [];
+    bucket.push(item);
+    byChecklist.set(item.checklistId, bucket);
+  }
+
+  return {
+    ...detail,
+    boardLabels,
+    attachedLabelIds: attached.map((a) => a.labelId),
+    lists: lists_,
+    checklists: checklistRows.map((c) => ({
+      id: c.id,
+      title: c.title,
+      items: byChecklist.get(c.id) ?? [],
+    })),
+  };
 }

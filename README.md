@@ -26,8 +26,38 @@ Redis, no queue, no object store, no third-party auth provider.
 - **MCP server** — Claude Code, claude.ai connectors, Cursor and any other MCP
   client can read and manage your boards, authenticated with personal access
   tokens (read-only supported)
-- **Light / dark / system theming**, responsive from phone to desktop
+- **Four visual themes** — the default light/dark plus three self-contained
+  skins: **Pixel Quest** (8-bit console), **Grid Protocol** (Tron hairlines and
+  glow) and **Miami Deadline** (80s neon), each with an optional CRT scanline
+  overlay
+- **Card detail** at a shareable URL — labels, description, checklists,
+  assignees, move between lists
+- **Public board sharing** — a read-only link anyone can open, no account needed
+- Responsive from phone to desktop
 - **Self-host anywhere** — Vercel free tier, Docker, or any Node host
+
+## Themes
+
+Pick a skin from the user menu → **Appearance**. Themes are stored in your
+browser (per device, not per account), applied before first paint so there is no
+flash, and they cover the whole app — sidebar, dialogs, settings and the card
+detail, not just the board.
+
+| Theme | Look |
+| ----- | ---- |
+| **Default** | Follows your light / dark setting |
+| **Pixel Quest** | Chunky 3–4px borders, hard offset shadows, 16px dotted grid, Press Start 2P / VT323 |
+| **Grid Protocol** | Near-black ground, 1px cyan hairlines, glow instead of fill, 40px vector grid, Orbitron / Archivo |
+| **Miami Deadline** | Hot pink / cyan / yellow on violet, flat colour-block offsets, 5px top rules, Audiowide / Archivo |
+
+The three skins are dark by design, so the light/dark toggle is hidden while one
+is active. **Scanlines** (a CRT overlay) can be turned off per device.
+
+<!-- TODO: add theme screenshots
+| Pixel Quest | Grid Protocol | Miami Deadline |
+| ----------- | ------------- | -------------- |
+| ![Pixel](docs/screenshots/pixel.png) | ![Grid](docs/screenshots/grid.png) | ![Retro](docs/screenshots/retro.png) |
+-->
 
 ## Screenshots
 
@@ -166,6 +196,23 @@ Invite links can expire (24h / 7 days / never), be single-use or capped, and be
 bound to a specific email address. A workspace always keeps at least one owner.
 
 ---
+
+## Sharing a board publicly
+
+Board header → **Share** → *Create public link*. Anyone with the link gets a
+read-only view of the board: lists, cards, labels, due dates, checklist progress
+and assignee first names. No account required.
+
+- Only a workspace **admin or owner** can publish, rotate or disable a link.
+- The link uses its own `nqb_` token, not the board's id — so it can be rotated
+  or revoked without changing anything else, and turning sharing off leaves
+  nothing guessable behind.
+- Archived lists and cards never appear.
+- The payload contains **no email addresses and no user ids** — assignees show a
+  first name and avatar only.
+- Public pages are `noindex` by default.
+- A share token grants read access to that one board and nothing else: it cannot
+  invoke any action, reach the MCP endpoint, or open the private board URL.
 
 ## Configuration
 

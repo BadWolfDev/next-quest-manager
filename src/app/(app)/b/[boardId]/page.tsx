@@ -2,8 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { listAssignableMembers } from "@/actions/members";
+import { listAssignableMembersFor } from "@/lib/core/members";
 import { BoardView } from "@/components/board/board-view";
+import { ShareDialog } from "@/components/board/share-dialog";
+import { db } from "@/db";
+import { boards } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
 import { AuthorizationError } from "@/lib/errors";
 import { getBoardPage } from "@/lib/queries";
 import { uuidSchema } from "@/lib/validation";
@@ -37,7 +42,19 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
   const { boardId } = await params;
   const { board, workspace, lists, role } = await loadBoard(boardId);
   const canWrite = role !== "viewer";
-  const members = await listAssignableMembers(workspace.id);
+  const members = await listAssignableMembersFor(workspace.id);
+
+  // The share token is read here — already inside the authorised board context
+  // — rather than widening BoardContext for one screen.
+  const [shareRow] = await db
+    .select({ publicToken: boards.publicToken })
+    .from(boards)
+    .where(eq(boards.id, board.id))
+    .limit(1);
+  const origin = (await headers()).get("origin") ?? "";
+  const shareUrl = shareRow?.publicToken
+    ? `${origin}/p/${shareRow.publicToken}`
+    : null;
 
   return (
     <div className="flex h-dvh flex-col md:h-dvh">
@@ -56,7 +73,7 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
             >
               {workspace.name}
             </Link>
-            <h1 className="mt-1 flex items-center gap-2.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">
+            <h1 className="nqm-skin-title mt-1 flex items-center gap-2.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">
               <span
                 aria-hidden="true"
                 className="size-3.5 shrink-0 rounded-[5px]"
@@ -64,6 +81,13 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
               />
               {board.name}
             </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <ShareDialog
+              boardId={board.id}
+              initialShareUrl={shareUrl}
+              canShare={role === "owner" || role === "admin"}
+            />
           </div>
           <p className="text-muted-foreground hidden text-xs sm:block">
             {canWrite

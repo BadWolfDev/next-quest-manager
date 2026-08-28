@@ -10,6 +10,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { AddCard } from "@/components/board/add-card";
 import type { AssignableMember } from "@/components/board/assignee-popover";
+import { listAccent } from "@/components/board/list-accent";
 import type { BoardListState } from "@/components/board/board-state";
 import { ListHeader } from "@/components/board/list-header";
 import { CardBody, SortableCard } from "@/components/board/sortable-card";
@@ -24,14 +25,17 @@ export function dropZoneId(listId: string) {
 export function ListShell({
   children,
   className,
+  style,
 }: {
   children: React.ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }) {
   return (
     <div
+      style={style}
       className={cn(
-        "bg-muted/50 flex max-h-full w-[85vw] max-w-[20rem] shrink-0 snap-center flex-col rounded-xl border p-2.5 sm:w-72 sm:snap-align-none",
+        "nqm-skin-column bg-muted/50 flex max-h-full w-[85vw] max-w-[20rem] shrink-0 snap-center flex-col rounded-xl border p-2.5 sm:w-72 sm:snap-align-none",
         className,
       )}
     >
@@ -62,10 +66,15 @@ export function ListPreview({ list }: { list: BoardListState }) {
 
 export function SortableList({
   list,
+  index,
+  boardId,
   members,
   canWrite,
 }: {
   list: BoardListState;
+  /** Position on the board; drives the retro skin's top-rule colour. */
+  index: number;
+  boardId: string;
   members: AssignableMember[];
   canWrite: boolean;
 }) {
@@ -94,7 +103,7 @@ export function SortableList({
       className={cn("flex", isDragging && "opacity-40")}
       aria-roledescription="Draggable list"
     >
-      <ListShell>
+      <ListShell style={{ "--list-accent": listAccent(index) } as React.CSSProperties}>
         <ListHeader
           listId={list.id}
           name={list.name}
@@ -117,6 +126,7 @@ export function SortableList({
                 card={card}
                 listId={list.id}
                 listName={list.name}
+                boardId={boardId}
                 members={members}
                 canWrite={canWrite}
               />

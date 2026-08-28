@@ -139,6 +139,36 @@ argument — any caller could name any user. Shared logic that needs an explicit
 actor lives in `src/lib/` (see `lib/core/members.ts`), and the action wrapper
 calls it with no actor so the caller is session-resolved.
 
+**Skins are a token layer, not forked components.** `globals.css` defines each
+skin under `:root[data-theme="pixel"|"grid"|"retro"]` and maps the handoff's
+palette onto the *existing* shadcn variables (`--background`, `--card`,
+`--border`, `--sidebar-*`, …). That is why the sidebar, dialogs, settings and
+auth pages come along for free. Skin-only extras are namespaced `--skin-*`
+(`--skin-shadow-card`, `--skin-field`, `--skin-font-display`,
+`--skin-modal-anim`) and consumed through utility classes (`.nqm-skin-card`,
+`.nqm-skin-column`, `.nqm-skin-modal`, `.nqm-skin-kicker`). Never fork a
+component for a theme.
+
+next-themes owns the *class* on `<html>`; skins own the `data-theme`
+*attribute*. They do not collide, and `:root[data-theme=…]` (0,2,0) outranks
+`.dark` (0,1,0), so an active skin wins without disabling the light/dark toggle
+— the toggle is simply hidden while a skin is on, because it would do nothing.
+
+**Skin choice lives in localStorage, per device — not in the database.** A
+deliberate product decision: no round trip before first paint, and the same
+account can look different on different machines. The inline script in the root
+layout (`SKIN_INIT_SCRIPT`) stamps the attribute before paint; every storage
+read is wrapped in try/catch because browsers with site data blocked throw on
+access.
+
+**The public board path is separate on purpose.** `lib/core/public-board.ts`
+resolves a share token straight to data and never consults a session. Crucially
+the `authorize()` helpers know nothing about tokens — do not add a token branch
+there. Keeping the two apart is the structural guarantee that a share link can
+never reach a mutation: there is no code path where a token satisfies a
+membership check. Public payloads must carry no emails and no user ids; check
+the serialized RSC output, not just the rendered UI.
+
 **Soft deletes.** `archived_at` rather than `DELETE`, so history survives.
 Queries must filter `isNull(archivedAt)` unless they deliberately want archives.
 
@@ -184,6 +214,8 @@ src/
     ui/           shadcn/ui primitives — regenerate, don't hand-edit
     app/          shell, sidebar, dialogs
     auth/         sign-in / sign-up form
+    card/         card detail (modal + standalone route)
+    public/       anonymous read-only board view
     board/        dnd-kit board: board-view, sortable-list, sortable-card,
                   list-header, add-card, add-list, board-state (pure reducer),
                   assignee-popover, activity-panel, use-board-freshness
@@ -195,6 +227,8 @@ src/
                   validation, errors, api-tokens, invites, notifications
     core/         board-ops.ts, members.ts — the single implementation of every
                   board mutation and read, shared by server actions and MCP
+                  public-board.ts — the isolated, session-free public read path
+  skin.ts         skin list, storage keys, the no-flash inline script
   mcp/            server.ts — MCP tool definitions
   auth.ts         Auth.js, Node runtime (providers + DB)
   auth.config.ts  Auth.js, edge-safe half (no providers, no DB)
@@ -231,3 +265,13 @@ docker compose up -d db   # local Postgres on :5432
   or lookup path.
 - Every export of a `"use server"` file is a publicly callable endpoint. Do not
   leave unused exports there.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

@@ -12,7 +12,10 @@ import { listMyBoards, listMyWorkspaces } from "@/lib/queries";
  */
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const user = await requireUser().catch(() => null);
-  if (!user) redirect("/login");
+  // Not just "signed out" — the session may be a valid JWT for a user that no
+  // longer exists. Route through the handler that clears the cookie, otherwise
+  // the proxy (which only sees the intact token) bounces straight back here.
+  if (!user) redirect("/api/session/expired");
 
   const [workspaces, boards, unreadCount] = await Promise.all([
     listMyWorkspaces(),

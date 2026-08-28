@@ -4,7 +4,7 @@ import { ChevronsUpDown, KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
 import { signOutAction } from "@/actions/session";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { AppearancePicker } from "@/components/appearance-picker";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -67,10 +67,7 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
 
         <DropdownMenuSeparator />
 
-        <div className="flex items-center justify-between px-2 py-1.5">
-          <span className="text-sm">Theme</span>
-          <ThemeToggle />
-        </div>
+        <AppearancePicker />
 
         <DropdownMenuSeparator />
 

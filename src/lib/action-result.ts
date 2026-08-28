@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AuthenticationError, AuthorizationError } from "@/lib/errors";
 import { fieldErrors } from "@/lib/validation";
+import { logError } from "@/lib/log-error";
 
 export type ActionState = {
   ok: boolean;
@@ -32,6 +33,6 @@ export function toActionError(error: unknown): ActionState {
   if (error instanceof AuthorizationError) {
     return { ok: false, message: error.message };
   }
-  console.error("[action]", error);
+  logError("[action]", error);
   return { ok: false, message: "Something went wrong. Please try again." };
 }

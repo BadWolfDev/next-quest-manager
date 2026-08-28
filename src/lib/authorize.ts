@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq } from "drizzle-orm";
+import { cache } from "react";
 
 import { auth } from "@/auth";
 import { db } from "@/db";
@@ -8,6 +9,7 @@ import {
   boards,
   cards,
   lists,
+  users,
   workspaceMembers,
   workspaces,
   type WorkspaceRole,
@@ -56,18 +58,55 @@ export function roleSatisfies(actual: WorkspaceRole, minimum: WorkspaceRole) {
   return ROLE_RANK[actual] >= ROLE_RANK[minimum];
 }
 
+/**
+ * Resolve the session to a user that actually exists.
+ *
+ * A JWT is self-contained, so a cookie minted before the row was deleted (a
+ * recreated dev database, a removed account) still verifies and still carries a
+ * user id. Trusting it hands a dangling id to any insert that references
+ * `users` — which surfaced as a raw foreign-key violation from
+ * `createWorkspaceAction` instead of "you are not signed in".
+ *
+ * So the token is only ever a *claim*: we confirm the row against the database
+ * before treating anyone as authenticated. One indexed primary-key lookup,
+ * memoised per request with React `cache()`, so a page that calls
+ * requireUser() several times pays for it once.
+ *
+ * Reading the row also means name, avatar and role changes take effect without
+ * waiting for the JWT to be reissued.
+ */
+const resolveSessionUser = cache(async (): Promise<SessionUser | null> => {
+  const session = await auth();
+  const claimedId = session?.user?.id;
+  if (!claimedId) return null;
+
+  const [row] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      image: users.image,
+      role: users.role,
+    })
+    .from(users)
+    .where(eq(users.id, claimedId))
+    .limit(1);
+
+  // The token verified but the account is gone: not authenticated.
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    image: row.image,
+    role: row.role,
+  };
+});
+
 /** The signed-in user, or `null`. Never throws. */
 export async function getSessionUser(): Promise<SessionUser | null> {
-  const session = await auth();
-  const user = session?.user;
-  if (!user?.id || !user.email) return null;
-  return {
-    id: user.id,
-    email: user.email,
-    name: user.name ?? user.email,
-    image: user.image ?? null,
-    role: user.role ?? "user",
-  };
+  return resolveSessionUser();
 }
 
 /** The signed-in user, or throw. Use at the top of every server action. */

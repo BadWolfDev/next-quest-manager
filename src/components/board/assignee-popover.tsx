@@ -114,6 +114,7 @@ export function AssigneePopover({
           type="button"
           aria-label={`Assign ${cardTitle}`}
           title="Assign"
+          data-card-control=""
           onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
           className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-ring/60 grid size-5 shrink-0 place-items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2"

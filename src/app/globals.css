@@ -179,3 +179,458 @@
     );
   }
 }
+
+/* ==========================================================================
+   VISUAL SKINS  (design handoff: Pixel Quest / Grid Protocol / Miami Deadline)
+
+   Each skin maps the handoff's palette onto the SAME shadcn/Tailwind variable
+   layer the rest of the app already consumes (--background, --card, --border,
+   --primary, --sidebar-*, …). That is what keeps the sidebar, dialogs, auth
+   pages and settings screens coherent inside a skin without forking a single
+   component.
+
+   `:root[data-theme="…"]` is specificity (0,2,0), which outranks next-themes'
+   `.dark` (0,1,0), so an active skin wins regardless of the light/dark toggle.
+
+   Skin-only extras are namespaced `--skin-*`.
+   ========================================================================== */
+
+:root {
+  /* Neutral defaults so `--skin-*` is always defined, even with no skin. */
+  --skin-field: none;
+  --skin-field-size: auto;
+  --skin-shadow-card: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 0.05));
+  --skin-shadow-card-hover: var(--shadow-md, 0 4px 6px rgb(0 0 0 / 0.07));
+  --skin-shadow-column: none;
+  --skin-shadow-modal: none;
+  --skin-shadow-button: none;
+  --skin-border-width: 1px;
+  --skin-font-display: var(--font-sans);
+  --skin-font-body: var(--font-sans);
+  --skin-title-shadow: none;
+  --skin-accent: var(--primary);
+  --skin-scanlines: none;
+  --skin-scanline-size: auto;
+  --skin-modal-anim: nqm-modal-fade 150ms ease-out;
+  --skin-chip-tracking: 0.02em;
+  /* Kickers use their own face: retro's are Archivo, not Audiowide. */
+  --skin-font-kicker: var(--font-sans);
+  --skin-modal-title-shadow: none;
+  /* pixel/grid set uppercase; retro stays mixed case per the mock. */
+  --skin-title-case: none;
+  --skin-title-tracking: normal;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 1 — Pixel Quest
+   -------------------------------------------------------------------------- */
+:root[data-theme="pixel"] {
+  --nq-bg: #1a1c2c;
+  --nq-bg-grid: #20233a;
+  --nq-surface: #141626;
+  --nq-surface-2: #29366f;
+  --nq-surface-3: #1e2140;
+  --nq-line: #4a5aa8;
+  --nq-line-dim: #29366f;
+  --nq-shadow: #0c0e18;
+  --nq-shadow-deep: #05060d;
+  --nq-text: #f4f4f4;
+  --nq-text-2: #e4e6f5;
+  --nq-text-dim: #8b9bd4;
+  --nq-text-dimmer: #6b7bb8;
+  --nq-accent: #ef7d57;
+  --nq-accent-dark: #a34a2c;
+  --nq-gold: #ffcd75;
+  --nq-green: #38b764;
+  --nq-green-dark: #17532c;
+
+  /* shadcn layer */
+  --background: var(--nq-bg);
+  --foreground: var(--nq-text);
+  --card: var(--nq-surface-2);
+  --card-foreground: var(--nq-text);
+  --popover: var(--nq-surface);
+  --popover-foreground: var(--nq-text);
+  --primary: var(--nq-green);
+  --primary-foreground: #06210f;
+  --secondary: var(--nq-surface-3);
+  --secondary-foreground: var(--nq-text-2);
+  --muted: var(--nq-surface-3);
+  --muted-foreground: var(--nq-text-dim);
+  --accent: var(--nq-surface-2);
+  --accent-foreground: var(--nq-text);
+  --destructive: #ef4444;
+  --border: var(--nq-line);
+  --input: var(--nq-line);
+  --ring: var(--nq-gold);
+  --radius: 0px;
+  --sidebar: var(--nq-surface);
+  --sidebar-foreground: var(--nq-text);
+  --sidebar-primary: var(--nq-accent);
+  --sidebar-primary-foreground: #1a0d06;
+  --sidebar-accent: var(--nq-surface-2);
+  --sidebar-accent-foreground: var(--nq-text);
+  --sidebar-border: var(--nq-line-dim);
+  --sidebar-ring: var(--nq-gold);
+
+  /* skin extras */
+  --skin-field:
+    linear-gradient(var(--nq-bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--nq-bg-grid) 1px, transparent 1px);
+  --skin-field-size: 16px 16px;
+  --skin-shadow-card: 3px 3px 0 var(--nq-shadow);
+  --skin-shadow-card-hover: 5px 5px 0 var(--nq-shadow);
+  --skin-shadow-column: 6px 6px 0 var(--nq-shadow);
+  --skin-shadow-modal: 10px 10px 0 var(--nq-shadow-deep);
+  --skin-shadow-button: 4px 4px 0 var(--nq-accent-dark);
+  --skin-border-width: 3px;
+  --skin-font-display: var(--font-press-start), monospace;
+  --skin-font-body: var(--font-vt323), monospace;
+  --skin-title-shadow: 4px 4px 0 var(--nq-shadow);
+  --skin-accent: var(--nq-gold);
+  --skin-scanlines: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.22) 0 2px,
+    transparent 2px 4px
+  );
+  /* Console UI: the modal appears in one frame. */
+  --skin-modal-anim: none;
+  --skin-chip-tracking: 0.02em;
+  --skin-font-kicker: var(--font-press-start), monospace;
+  --skin-modal-title-shadow: 4px 4px 0 var(--nq-shadow);
+  --skin-title-case: uppercase;
+  --skin-title-tracking: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 2 — Grid Protocol
+   -------------------------------------------------------------------------- */
+:root[data-theme="grid"] {
+  --nq-bg: #04070c;
+  --nq-bg-modal: #03060a;
+  --nq-surface: #060b12;
+  --nq-surface-card: rgba(6, 16, 24, 0.85);
+  --nq-surface-modal: rgba(5, 12, 18, 0.96);
+  --nq-cyan: #7df9ff;
+  --nq-cyan-line: rgba(125, 249, 255, 0.26);
+  --nq-cyan-line-strong: rgba(125, 249, 255, 0.45);
+  --nq-grid: rgba(125, 249, 255, 0.07);
+  --nq-text: #ffffff;
+  --nq-text-2: #eafcff;
+  --nq-text-3: #cfeef4;
+  --nq-text-dim: #9fd6de;
+  --nq-text-dim-2: #4e8f9c;
+  --nq-text-dim-3: #3d6d78;
+  --nq-orange: #ff8a2b;
+  --nq-orange-dim: #8a5b30;
+
+  --background: var(--nq-bg);
+  --foreground: var(--nq-text-2);
+  --card: var(--nq-surface-card);
+  --card-foreground: var(--nq-text-3);
+  --popover: var(--nq-surface);
+  --popover-foreground: var(--nq-text-2);
+  --primary: var(--nq-cyan);
+  --primary-foreground: #02181c;
+  --secondary: rgba(125, 249, 255, 0.08);
+  --secondary-foreground: var(--nq-text-2);
+  --muted: rgba(125, 249, 255, 0.06);
+  --muted-foreground: var(--nq-text-dim-2);
+  --accent: rgba(125, 249, 255, 0.12);
+  --accent-foreground: var(--nq-text-2);
+  --destructive: var(--nq-orange);
+  --border: var(--nq-cyan-line);
+  --input: var(--nq-cyan-line);
+  --ring: var(--nq-cyan);
+  --radius: 0px;
+  --sidebar: var(--nq-surface);
+  --sidebar-foreground: var(--nq-text-3);
+  --sidebar-primary: var(--nq-cyan);
+  --sidebar-primary-foreground: #02181c;
+  --sidebar-accent: rgba(125, 249, 255, 0.1);
+  --sidebar-accent-foreground: var(--nq-text-2);
+  --sidebar-border: var(--nq-cyan-line);
+  --sidebar-ring: var(--nq-cyan);
+
+  --skin-field:
+    linear-gradient(var(--nq-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--nq-grid) 1px, transparent 1px);
+  --skin-field-size: 40px 40px;
+  --skin-shadow-card: none;
+  --skin-shadow-card-hover: 0 0 18px rgba(125, 249, 255, 0.5);
+  --skin-shadow-column: none;
+  --skin-shadow-modal:
+    0 0 44px rgba(125, 249, 255, 0.22),
+    inset 0 0 60px rgba(125, 249, 255, 0.04);
+  --skin-shadow-button: 0 0 24px rgba(125, 249, 255, 0.6);
+  --skin-border-width: 1px;
+  --skin-font-display: var(--font-orbitron), sans-serif;
+  --skin-font-body: var(--font-archivo), sans-serif;
+  --skin-title-shadow:
+    0 0 22px rgba(125, 249, 255, 0.9),
+    0 0 46px rgba(125, 249, 255, 0.5);
+  --skin-accent: var(--nq-cyan);
+  --skin-scanlines: repeating-linear-gradient(
+    to bottom,
+    rgba(125, 249, 255, 0.05) 0 1px,
+    transparent 1px 3px
+  );
+  --skin-modal-anim: nqm-modal-grid 120ms ease-out;
+  --skin-chip-tracking: 0.2em;
+  --skin-font-kicker: var(--font-orbitron), sans-serif;
+  --skin-modal-title-shadow: 0 0 22px rgba(125, 249, 255, 0.8);
+  --skin-title-case: uppercase;
+  --skin-title-tracking: 0.2em;
+}
+
+/* --------------------------------------------------------------------------
+   Theme 3 — Miami Deadline
+   -------------------------------------------------------------------------- */
+:root[data-theme="retro"] {
+  --nq-bg: #221046;
+  --nq-bg-modal: #150a2e;
+  --nq-surface: #2b1257;
+  --nq-surface-deep: #180a33;
+  --nq-line: #3b1d70;
+  --nq-pink: #ff2e93;
+  --nq-pink-deep: #8f1257;
+  --nq-cyan: #00e5ff;
+  --nq-yellow: #ffd23f;
+  --nq-text: #ffe9d6;
+  --nq-text-2: #e6d6ff;
+  --nq-text-dim: #b39ae0;
+  --nq-text-dim-2: #8b6bc9;
+
+  --background: var(--nq-bg);
+  --foreground: var(--nq-text);
+  --card: var(--nq-surface-deep);
+  --card-foreground: var(--nq-text-2);
+  --popover: var(--nq-surface);
+  --popover-foreground: var(--nq-text);
+  --primary: var(--nq-pink);
+  --primary-foreground: #2a0316;
+  --secondary: var(--nq-surface);
+  --secondary-foreground: var(--nq-text-2);
+  --muted: var(--nq-surface);
+  --muted-foreground: var(--nq-text-dim);
+  --accent: var(--nq-line);
+  --accent-foreground: var(--nq-text);
+  --destructive: #ff3b6b;
+  --border: var(--nq-line);
+  --input: var(--nq-line);
+  --ring: var(--nq-yellow);
+  --radius: 0px;
+  --sidebar: var(--nq-surface-deep);
+  --sidebar-foreground: var(--nq-text-2);
+  --sidebar-primary: var(--nq-pink);
+  --sidebar-primary-foreground: #2a0316;
+  --sidebar-accent: var(--nq-surface);
+  --sidebar-accent-foreground: var(--nq-text);
+  --sidebar-border: var(--nq-line);
+  --sidebar-ring: var(--nq-yellow);
+
+  /* Vertical-only stripes. */
+  --skin-field: linear-gradient(
+    90deg,
+    rgba(255, 46, 147, 0.08) 1px,
+    transparent 1px
+  );
+  --skin-field-size: 44px 44px;
+  --skin-shadow-card: none;
+  --skin-shadow-card-hover: 6px 6px 0 var(--nq-cyan);
+  --skin-shadow-column: none;
+  --skin-shadow-modal: 14px 14px 0 var(--nq-cyan);
+  --skin-shadow-button: 3px 3px 0 var(--nq-cyan);
+  --skin-border-width: 1px;
+  --skin-font-display: var(--font-audiowide), sans-serif;
+  --skin-font-body: var(--font-archivo), sans-serif;
+  --skin-title-shadow: 3px 3px 0 var(--nq-pink), 6px 6px 0 var(--nq-cyan);
+  --skin-accent: var(--nq-yellow);
+  --skin-scanlines: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.18) 0 2px,
+    transparent 2px 4px
+  );
+  --skin-modal-anim: nqm-modal-retro 140ms ease-out;
+  --skin-chip-tracking: 0.3em;
+  /* Archivo, per the mock: kickers are 700 11px Archivo, not Audiowide. */
+  --skin-font-kicker: var(--font-archivo), sans-serif;
+  /* Modal title takes ONE pink offset; only the board title gets pink + cyan. */
+  --skin-modal-title-shadow: 3px 3px 0 var(--nq-pink);
+  --skin-title-case: none;
+  --skin-title-tracking: normal;
+}
+
+/* --------------------------------------------------------------------------
+   Shared skin behaviour
+   -------------------------------------------------------------------------- */
+
+/* Radius 0 everywhere, in every skin — the handoff is explicit about this. */
+:root[data-theme="pixel"] *,
+:root[data-theme="grid"] *,
+:root[data-theme="retro"] * {
+  border-radius: 0 !important;
+}
+
+/* Body typography + the board field pattern. */
+:root[data-theme="pixel"] body,
+:root[data-theme="grid"] body,
+:root[data-theme="retro"] body {
+  font-family: var(--skin-font-body);
+  background-image: var(--skin-field);
+  background-size: var(--skin-field-size);
+  background-attachment: fixed;
+}
+
+/*
+  Headings take the display face — but NOT the title shadow.
+
+  The chromatic offset shadow is reserved for titular text only. Applying it to
+  every h1/h2 painted two offset copies of every small heading (kickers,
+  dialog titles, list headers), which in Miami Deadline reads as broken
+  text-doubling rather than style. Opt in explicitly with .nqm-skin-title /
+  .nqm-skin-modal-title.
+*/
+:root[data-theme="pixel"] h1,
+:root[data-theme="pixel"] h2,
+:root[data-theme="grid"] h1,
+:root[data-theme="grid"] h2,
+:root[data-theme="retro"] h1,
+:root[data-theme="retro"] h2 {
+  font-family: var(--skin-font-display);
+  /*
+    Deliberately does NOT set text-shadow. Headings have none by default, and
+    an unlayered `text-shadow: none` here would beat .nqm-skin-title — plain
+    CSS always outranks anything in @layer utilities, regardless of specificity.
+  */
+}
+
+/* Press Start 2P is unreadable at a tight line-height; the handoff calls it out. */
+:root[data-theme="pixel"] h1,
+:root[data-theme="pixel"] h2,
+:root[data-theme="pixel"] h3 {
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+/* Focus-visible: 2px in the theme accent, offset 2px. */
+:root[data-theme="pixel"] :focus-visible,
+:root[data-theme="grid"] :focus-visible,
+:root[data-theme="retro"] :focus-visible {
+  outline: 2px solid var(--skin-accent);
+  outline-offset: 2px;
+}
+
+@layer utilities {
+  /* Board card / list surfaces opt into the skin's depth recipe. */
+  .nqm-skin-card {
+    box-shadow: var(--skin-shadow-card);
+    transition: box-shadow 120ms ease-out;
+  }
+  .nqm-skin-card:hover {
+    box-shadow: var(--skin-shadow-card-hover);
+  }
+  .nqm-skin-column {
+    box-shadow: var(--skin-shadow-column);
+  }
+  .nqm-skin-modal {
+    box-shadow: var(--skin-shadow-modal);
+    animation: var(--skin-modal-anim);
+  }
+  .nqm-skin-display {
+    font-family: var(--skin-font-display);
+  }
+  .nqm-skin-kicker {
+    font-family: var(--skin-font-kicker);
+    letter-spacing: var(--skin-chip-tracking);
+    text-transform: uppercase;
+    /* Never the chromatic shadow — that is titular-only. */
+    text-shadow: none;
+  }
+  /* Titular text: the board title. Only this gets the full title shadow. */
+  .nqm-skin-title {
+    font-family: var(--skin-font-display);
+    text-shadow: var(--skin-title-shadow);
+    text-transform: var(--skin-title-case);
+    letter-spacing: var(--skin-title-tracking);
+  }
+  /* The card modal's title — a lighter shadow than the board title. */
+  .nqm-skin-modal-title {
+    font-family: var(--skin-font-display);
+    text-shadow: var(--skin-modal-title-shadow);
+  }
+  /* List column titles: uppercase + tracked in pixel/grid, mixed case in retro. */
+  .nqm-skin-list-title {
+    font-family: var(--skin-font-display);
+    text-transform: var(--skin-title-case);
+    letter-spacing: var(--skin-title-tracking);
+    text-shadow: none;
+  }
+  /* Drop placeholder — 3px dashed for pixel/retro, 1px for grid. */
+  .nqm-drop-placeholder {
+    border: var(--skin-border-width) dashed var(--border);
+  }
+}
+
+/* Skinned list columns get a heavier border, per the handoff. */
+:root[data-theme="pixel"] .nqm-skin-column,
+:root[data-theme="pixel"] .nqm-skin-card {
+  border-width: var(--skin-border-width);
+}
+
+/* Grid Protocol: cards carry a 2px accent left edge. */
+:root[data-theme="grid"] .nqm-skin-card {
+  border-left: 2px solid var(--nq-cyan-line-strong);
+}
+
+/*
+  Miami Deadline: list columns carry a 5px top rule in their status colour.
+
+  The colour comes from --list-accent, set per column from the list's INDEX in
+  JSX. It used to be :nth-of-type, which counts DOM siblings — so the private
+  board (which has an "add list" sibling and a wrapper) cycled differently from
+  the public board. An index-derived variable makes both views identical.
+*/
+:root[data-theme="retro"] .nqm-skin-column {
+  border-top: 5px solid var(--list-accent, var(--nq-pink));
+}
+
+/* --------------------------------------------------------------------------
+   Scanline overlay — fixed, non-interactive, above content, below nothing else.
+   -------------------------------------------------------------------------- */
+:root[data-scanlines="on"][data-theme="pixel"] body::after,
+:root[data-scanlines="on"][data-theme="grid"] body::after,
+:root[data-scanlines="on"][data-theme="retro"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background-image: var(--skin-scanlines);
+}
+
+/* --------------------------------------------------------------------------
+   Modal entry animations
+   -------------------------------------------------------------------------- */
+@keyframes nqm-modal-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nqm-modal-grid {
+  from { opacity: 0; transform: scale(1.02); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes nqm-modal-retro {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* The handoff's pixel skin is already instant; the other two drop to instant. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --skin-modal-anim: none;
+  }
+  .nqm-skin-card {
+    transition: none;
+  }
+}

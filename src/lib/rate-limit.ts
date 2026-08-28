@@ -1,5 +1,7 @@
 import "server-only";
 
+import { logError } from "@/lib/log-error";
+
 import { sql as raw } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -71,7 +73,7 @@ export async function rateLimit({
       retryAfter,
     };
   } catch (error) {
-    console.error("[rate-limit] failing closed:", error);
+    logError("[rate-limit] failing closed:", error);
     return { ok: false, remaining: 0, retryAfter: windowSeconds };
   }
 }

@@ -154,6 +154,14 @@ export const boards = pgTable(
     createdBy: uuid("created_by").references(() => users.id, {
       onDelete: "set null",
     }),
+    /**
+     * Public read-only share token, `nqb_<32 chars base64url>`. Null = private.
+     *
+     * Deliberately NOT the board's uuid: a separate secret can be rotated or
+     * revoked without touching the board's identity, and turning sharing off
+     * leaves no guessable residue.
+     */
+    publicToken: text("public_token"),
     archivedAt: timestamp("archived_at", {
       withTimezone: true,
       mode: "date",
@@ -162,6 +170,7 @@ export const boards = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
+    uniqueIndex("boards_public_token_unique").on(table.publicToken),
     index("boards_workspace_idx").on(table.workspaceId),
     index("boards_workspace_archived_idx").on(table.workspaceId, table.archivedAt),
   ],

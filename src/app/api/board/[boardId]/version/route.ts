@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireBoardAccess, READ_MIN_ROLE } from "@/lib/authorize";
 import { AuthenticationError, AuthorizationError } from "@/lib/errors";
 import { uuidSchema } from "@/lib/validation";
+import { logError } from "@/lib/log-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ export async function GET(
     ) {
       return NextResponse.json({ error: "not_found" }, { status: 404 });
     }
-    console.error("[board-version]", error);
+    logError("[board-version]", error);
     return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
 }

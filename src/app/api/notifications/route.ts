@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { AuthenticationError } from "@/lib/errors";
 import { countMyUnread } from "@/lib/notifications";
+import { logError } from "@/lib/log-error";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ export async function GET() {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
     }
-    console.error("[notifications]", error);
+    logError("[notifications]", error);
     return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
 }

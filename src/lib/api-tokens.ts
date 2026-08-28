@@ -1,5 +1,7 @@
 import "server-only";
 
+import { logError } from "@/lib/log-error";
+
 import { createHash, randomBytes } from "node:crypto";
 
 import { and, eq, isNull, or, sql as raw } from "drizzle-orm";
@@ -113,6 +115,6 @@ async function touchToken(tokenId: string, lastUsedAt: Date | null) {
       .set({ lastUsedAt: new Date() })
       .where(eq(apiTokens.id, tokenId));
   } catch (error) {
-    console.error("[api-tokens] could not update last_used_at:", error);
+    logError("[api-tokens] could not update last_used_at:", error);
   }
 }
