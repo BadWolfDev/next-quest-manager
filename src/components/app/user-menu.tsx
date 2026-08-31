@@ -1,10 +1,11 @@
 "use client";
 
-import { ChevronsUpDown, KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import { ChevronsUpDown, KeyRound, LogOut, Palette, ShieldCheck } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 
 import { signOutAction } from "@/actions/session";
-import { AppearancePicker } from "@/components/appearance-picker";
+import { ThemeDialog } from "@/components/theme-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -32,7 +33,12 @@ function initials(name: string) {
 }
 
 export function UserMenu({ user }: { user: UserMenuUser }) {
+  // The dialog is a sibling of the menu, not a child: selecting an item closes
+  // the DropdownMenu, which would unmount a dialog rendered inside it.
+  const [themeOpen, setThemeOpen] = useState(false);
+
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger className="hover:bg-sidebar-accent focus-visible:ring-ring/60 flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2">
         <Avatar className="size-8">
@@ -67,9 +73,17 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
 
         <DropdownMenuSeparator />
 
-        <AppearancePicker />
-
-        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={(event) => {
+            // Let the menu close on its own, then open the dialog.
+            event.preventDefault();
+            setThemeOpen(true);
+          }}
+          className="cursor-pointer"
+        >
+          <Palette className="size-4" />
+          Theme
+        </DropdownMenuItem>
 
         <DropdownMenuItem asChild>
           <Link href="/settings/tokens" className="cursor-pointer">
@@ -90,5 +104,8 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
         </form>
       </DropdownMenuContent>
     </DropdownMenu>
+
+    <ThemeDialog open={themeOpen} onOpenChange={setThemeOpen} />
+    </>
   );
 }

@@ -12,6 +12,7 @@ import {
   type AssignableMember,
 } from "@/components/board/assignee-popover";
 import type { BoardCardState } from "@/components/board/board-state";
+import { LabelChips } from "@/components/board/label-chips";
 import { cn } from "@/lib/utils";
 
 /** The card's visual body, shared by the in-list item and the DragOverlay. */
@@ -36,7 +37,16 @@ export function CardBody({
         dragging && "opacity-40",
       )}
     >
+      <LabelChips labels={card.labels} className="mb-1.5" />
+
       {card.title}
+
+      {card.excerpt ? (
+        <span className="text-muted-foreground mt-1 block text-xs leading-snug">
+          {card.excerpt}
+        </span>
+      ) : null}
+
       {card.dueDate ? (
         <span className="text-muted-foreground mt-1.5 flex items-center gap-1.5 text-xs">
           <CalendarClock className="size-3.5" />

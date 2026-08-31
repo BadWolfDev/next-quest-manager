@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
+import { toPlainExcerpt } from "@/lib/excerpt";
 import {
   boards,
   cardAssignees,
@@ -49,6 +50,8 @@ export type PublicBoardCard = {
   id: string;
   title: string;
   dueDate: Date | null;
+  /** Plain-text preview; the full markdown is not sent to the public payload. */
+  excerpt: string | null;
   labels: { id: string; name: string; color: string }[];
   assignees: PublicAssignee[];
   checklistDone: number;
@@ -103,6 +106,7 @@ export async function getPublicBoard(
           listId: cards.listId,
           title: cards.title,
           dueDate: cards.dueDate,
+          description: cards.description,
         })
         .from(cards)
         .where(and(eq(cards.boardId, board.id), isNull(cards.archivedAt)))
@@ -170,6 +174,7 @@ export async function getPublicBoard(
       id: c.id,
       title: c.title,
       dueDate: c.dueDate,
+      excerpt: toPlainExcerpt(c.description),
       labels: labelsByCard.get(c.id) ?? [],
       assignees: assigneesByCard.get(c.id) ?? [],
       checklistDone: progress.done,

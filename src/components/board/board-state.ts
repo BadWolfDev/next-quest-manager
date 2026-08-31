@@ -11,11 +11,20 @@ export type BoardCardAssignee = {
   image: string | null;
 };
 
+export type BoardCardLabel = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 export type BoardCardState = {
   id: string;
   title: string;
   dueDate: Date | null;
   assignees: BoardCardAssignee[];
+  labels: BoardCardLabel[];
+  /** Plain-text preview of the description; see lib/excerpt.ts. */
+  excerpt: string | null;
 };
 
 export type BoardListState = {

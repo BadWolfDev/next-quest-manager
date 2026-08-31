@@ -38,7 +38,8 @@ Redis, no queue, no object store, no third-party auth provider.
 
 ## Themes
 
-Pick a skin from the user menu → **Appearance**. Themes are stored in your
+Pick a skin from the user menu → **Theme**, which opens a picker with a live
+preview of each one. Themes are stored in your
 browser (per device, not per account), applied before first paint so there is no
 flash, and they cover the whole app — sidebar, dialogs, settings and the card
 detail, not just the board.

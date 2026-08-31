@@ -167,6 +167,13 @@ next-themes owns the *class* on `<html>`; skins own the `data-theme`
 `.dark` (0,1,0), so an active skin wins without disabling the light/dark toggle
 — the toggle is simply hidden while a skin is on, because it would do nothing.
 
+The picker is a dialog opened from the user menu (`components/theme-dialog.tsx`),
+rendered as a *sibling* of the DropdownMenu — selecting a menu item closes the
+menu, which would unmount a dialog nested inside it. Each card previews its
+theme through `[data-preview-theme]`, a second selector on the skin token blocks
+that re-scopes them onto a nested element, so previews paint from real tokens
+rather than hardcoded swatches.
+
 **Skin choice lives in localStorage, per device — not in the database.** A
 deliberate product decision: no round trip before first paint, and the same
 account can look different on different machines. The inline script in the root

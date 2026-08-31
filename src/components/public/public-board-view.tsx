@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { LabelChips } from "@/components/board/label-chips";
 import { listAccent } from "@/components/board/list-accent";
 import type { PublicBoard } from "@/lib/core/public-board";
 
@@ -87,20 +88,15 @@ export function PublicBoardView({
                     href={`/p/${token}/c/${card.id}`}
                     className="nqm-skin-card bg-card focus-visible:ring-ring/70 block rounded-lg border px-3 py-2.5 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2"
                   >
-                    {card.labels.length > 0 ? (
-                      <span className="mb-1.5 flex flex-wrap gap-1">
-                        {card.labels.map((l) => (
-                          <span
-                            key={l.id}
-                            title={l.name}
-                            className="h-1.5 w-7 rounded-full"
-                            style={{ background: l.color }}
-                          />
-                        ))}
-                      </span>
-                    ) : null}
+                    <LabelChips labels={card.labels} className="mb-1.5" />
 
                     {card.title}
+
+                    {card.excerpt ? (
+                      <span className="text-muted-foreground mt-1 block text-xs leading-snug">
+                        {card.excerpt}
+                      </span>
+                    ) : null}
 
                     <span className="text-muted-foreground mt-1.5 flex items-center gap-3 text-xs">
                       {card.dueDate ? (

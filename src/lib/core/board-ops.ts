@@ -1150,3 +1150,30 @@ export async function getCardModalData(cardId: string, actor?: Actor) {
     })),
   };
 }
+
+/** Labels attached to every card on a board, keyed by card id. */
+export async function labelsForBoard(boardId: string) {
+  const rows = await db
+    .select({
+      cardId: cardLabels.cardId,
+      id: labels.id,
+      name: labels.name,
+      color: labels.color,
+    })
+    .from(cardLabels)
+    .innerJoin(labels, eq(labels.id, cardLabels.labelId))
+    .innerJoin(cards, eq(cards.id, cardLabels.cardId))
+    .where(eq(cards.boardId, boardId))
+    .orderBy(asc(labels.createdAt));
+
+  const byCard = new Map<
+    string,
+    { id: string; name: string; color: string }[]
+  >();
+  for (const row of rows) {
+    const bucket = byCard.get(row.cardId) ?? [];
+    bucket.push({ id: row.id, name: row.name, color: row.color });
+    byCard.set(row.cardId, bucket);
+  }
+  return byCard;
+}

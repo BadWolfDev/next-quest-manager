@@ -122,6 +122,8 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
               title: card.title,
               dueDate: card.dueDate,
               assignees: card.assignees,
+              labels: card.labels,
+              excerpt: card.excerpt,
             })),
           }))}
         />

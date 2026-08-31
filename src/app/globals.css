@@ -224,7 +224,8 @@
 /* --------------------------------------------------------------------------
    Theme 1 — Pixel Quest
    -------------------------------------------------------------------------- */
-:root[data-theme="pixel"] {
+:root[data-theme="pixel"],
+[data-preview-theme="pixel"] {
   --nq-bg: #1a1c2c;
   --nq-bg-grid: #20233a;
   --nq-surface: #141626;
@@ -305,7 +306,8 @@
 /* --------------------------------------------------------------------------
    Theme 2 — Grid Protocol
    -------------------------------------------------------------------------- */
-:root[data-theme="grid"] {
+:root[data-theme="grid"],
+[data-preview-theme="grid"] {
   --nq-bg: #04070c;
   --nq-bg-modal: #03060a;
   --nq-surface: #060b12;
@@ -386,7 +388,8 @@
 /* --------------------------------------------------------------------------
    Theme 3 — Miami Deadline
    -------------------------------------------------------------------------- */
-:root[data-theme="retro"] {
+:root[data-theme="retro"],
+[data-preview-theme="retro"] {
   --nq-bg: #221046;
   --nq-bg-modal: #150a2e;
   --nq-surface: #2b1257;
@@ -468,7 +471,10 @@
 /* Radius 0 everywhere, in every skin — the handoff is explicit about this. */
 :root[data-theme="pixel"] *,
 :root[data-theme="grid"] *,
-:root[data-theme="retro"] * {
+:root[data-theme="retro"] *,
+[data-preview-theme="pixel"] *,
+[data-preview-theme="grid"] *,
+[data-preview-theme="retro"] * {
   border-radius: 0 !important;
 }
 
@@ -633,4 +639,54 @@
   .nqm-skin-card {
     transition: none;
   }
+}
+
+/* --------------------------------------------------------------------------
+   Theme previews
+
+   `[data-preview-theme]` re-scopes a skin's token block onto a nested element,
+   so the little board mock in the theme picker paints from that theme's ACTUAL
+   tokens — background, surface, border, accent, field pattern, shadow recipe —
+   regardless of which skin the app is currently wearing. The three skin blocks
+   above carry the selector; "default" has no `[data-theme]` block to borrow, so
+   its handful of preview tokens are restated here for both light and dark.
+   -------------------------------------------------------------------------- */
+[data-preview-theme="default"] {
+  --background: oklch(0.985 0.003 285);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.965 0.005 285);
+  --border: oklch(0.915 0.006 285);
+  --primary: oklch(0.54 0.21 288);
+  --skin-field: none;
+  --skin-field-size: auto;
+  --skin-shadow-card: 0 1px 2px rgb(0 0 0 / 0.06);
+  --skin-shadow-column: none;
+}
+
+.dark [data-preview-theme="default"] {
+  --background: oklch(0.165 0.012 285);
+  --card: oklch(0.205 0.014 285);
+  --muted: oklch(0.255 0.014 285);
+  --border: oklch(1 0 0 / 11%);
+  --primary: oklch(0.7 0.17 292);
+}
+
+/* The preview is decorative: never let it trap a pointer or a screen reader. */
+.nqm-theme-preview {
+  background-color: var(--background);
+  background-image: var(--skin-field);
+  background-size: var(--skin-field-size);
+}
+.nqm-theme-preview-column {
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+  box-shadow: var(--skin-shadow-column);
+}
+.nqm-theme-preview-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--skin-shadow-card);
+}
+.nqm-theme-preview-accent {
+  background-color: var(--primary);
 }

@@ -11,7 +11,8 @@ import {
   workspaceMembers,
   workspaces,
 } from "@/db/schema";
-import { assigneesForBoard } from "@/lib/core/board-ops";
+import { assigneesForBoard, labelsForBoard } from "@/lib/core/board-ops";
+import { toPlainExcerpt } from "@/lib/excerpt";
 import {
   requireBoardAccess,
   requireUser,
@@ -112,6 +113,12 @@ export type BoardCardAssignee = {
   image: string | null;
 };
 
+export type BoardCardLabel = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 export type BoardList = {
   id: string;
   name: string;
@@ -122,6 +129,12 @@ export type BoardList = {
     position: string;
     dueDate: Date | null;
     assignees: BoardCardAssignee[];
+    labels: BoardCardLabel[];
+    /**
+     * Plain-text preview only — the full markdown never reaches the board
+     * payload. See lib/excerpt.ts.
+     */
+    excerpt: string | null;
   }[];
 };
 
@@ -151,13 +164,17 @@ export async function getBoardPage(boardId: string) {
         title: cards.title,
         position: cards.position,
         dueDate: cards.dueDate,
+        description: cards.description,
       })
       .from(cards)
       .where(and(eq(cards.boardId, ctx.board.id), isNull(cards.archivedAt)))
       .orderBy(asc(cards.position)),
   ]);
 
-  const assignees = await assigneesForBoard(ctx.board.id);
+  const [assignees, cardLabelsByCard] = await Promise.all([
+    assigneesForBoard(ctx.board.id),
+    labelsForBoard(ctx.board.id),
+  ]);
 
   const byList = new Map<string, BoardList["cards"]>();
   for (const card of cardRows) {
@@ -168,6 +185,9 @@ export async function getBoardPage(boardId: string) {
       position: card.position,
       dueDate: card.dueDate,
       assignees: assignees.get(card.id) ?? [],
+      labels: cardLabelsByCard.get(card.id) ?? [],
+      // Truncated here so the full description never leaves the server.
+      excerpt: toPlainExcerpt(card.description),
     });
     byList.set(card.listId, bucket);
   }
