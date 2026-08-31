@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { AuthForm } from "@/components/auth/auth-form";
+import { isClosedRegistration } from "@/lib/registration";
 import {
   Card,
   CardContent,
@@ -28,7 +29,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <AuthForm mode="signin" next={next} />
+        <AuthForm
+          mode="signin"
+          next={next}
+          allowSignupLink={!isClosedRegistration()}
+        />
       </CardContent>
     </Card>
   );

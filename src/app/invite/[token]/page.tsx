@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { getSessionUser } from "@/lib/authorize";
 import { INVITE_PROBLEM_MESSAGE, resolveInvite } from "@/lib/invites";
+import { isClosedRegistration } from "@/lib/registration";
 
 export const dynamic = "force-dynamic";
 
@@ -122,6 +123,25 @@ export default async function InvitePage({
               token={token}
               workspaceName={invite.workspaceName}
             />
+          ) : isClosedRegistration() ? (
+            /*
+              Closed instance: a workspace invite grants membership, never an
+              account. Offering "create an account" here would turn every
+              workspace invite into a signup back door — signUpAction refuses
+              regardless, but the UI must not dangle the option either.
+            */
+            <div className="space-y-3">
+              <p className="text-muted-foreground text-sm">
+                This instance is invite-only — ask your administrator for an
+                account, then use this link to join the workspace.
+              </p>
+              <Button asChild className="w-full">
+                <Link href={`/login?next=/invite/${encodeURIComponent(token)}`}>
+                  Sign in to join
+                  <ArrowRight className="size-4" />
+                </Link>
+              </Button>
+            </div>
           ) : (
             <div className="space-y-3">
               <p className="text-muted-foreground text-sm">

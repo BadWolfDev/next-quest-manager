@@ -29,9 +29,21 @@ function FieldError({ id, message }: { id: string; message?: string }) {
   );
 }
 
-type Props = { mode: "signin" | "signup"; next?: string };
+type Props = {
+  mode: "signin" | "signup";
+  next?: string;
+  /** Instance invite token, when signing up through /join/<token>. */
+  inviteToken?: string;
+  /** Hide the "create an account" cross-link when signup is closed. */
+  allowSignupLink?: boolean;
+};
 
-export function AuthForm({ mode, next }: Props) {
+export function AuthForm({
+  mode,
+  next,
+  inviteToken,
+  allowSignupLink = true,
+}: Props) {
   const isSignUp = mode === "signup";
   const action = isSignUp ? signUpAction : signInAction;
   const [state, formAction] = useActionState<ActionState, FormData>(
@@ -42,6 +54,9 @@ export function AuthForm({ mode, next }: Props) {
   return (
     <form action={formAction} className="space-y-4" noValidate>
       {next ? <input type="hidden" name="next" value={next} /> : null}
+      {inviteToken ? (
+        <input type="hidden" name="inviteToken" value={inviteToken} />
+      ) : null}
 
       {state.message ? (
         <p
@@ -120,15 +135,17 @@ export function AuthForm({ mode, next }: Props) {
 
       <SubmitButton>{isSignUp ? "Create account" : "Sign in"}</SubmitButton>
 
-      <p className="text-muted-foreground text-center text-sm">
-        {isSignUp ? "Already have an account? " : "New here? "}
-        <Link
-          href={isSignUp ? "/login" : "/signup"}
-          className="text-foreground font-medium underline underline-offset-4 hover:text-primary"
-        >
-          {isSignUp ? "Sign in" : "Create an account"}
-        </Link>
-      </p>
+      {isSignUp || allowSignupLink ? (
+        <p className="text-muted-foreground text-center text-sm">
+          {isSignUp ? "Already have an account? " : "New here? "}
+          <Link
+            href={isSignUp ? "/login" : "/signup"}
+            className="text-foreground font-medium underline underline-offset-4 hover:text-primary"
+          >
+            {isSignUp ? "Sign in" : "Create an account"}
+          </Link>
+        </p>
+      ) : null}
     </form>
   );
 }

@@ -20,7 +20,7 @@ const PUBLIC_PATHS = new Set(["/", "/login", "/signup"]);
  * a shareable link. The page itself decides what to show; joining still
  * requires an authenticated session.
  */
-const PUBLIC_PREFIXES = ["/invite/", "/p/", "/api/session/"];
+const PUBLIC_PREFIXES = ["/invite/", "/join/", "/p/", "/api/session/"];
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;

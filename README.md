@@ -19,6 +19,8 @@ Redis, no queue, no object store, no third-party auth provider.
   keyboard support
 - **Optimistic UI** — drops apply instantly and roll back with a toast if the
   server refuses
+- **Optional invite-only mode** — closed registration with an env-configured
+  admin who mints account invites
 - **Shared workspaces** — invite links (no SMTP required), four roles
   (owner / admin / member / viewer), member management, per-card assignees
 - **Live-ish collaboration** — board freshness polling, an activity panel, and
@@ -223,6 +225,46 @@ bound to a specific email address. A workspace always keeps at least one owner.
 
 ---
 
+## Closed registration (invite-only instances)
+
+By default anyone who can reach your instance can sign up, and the first account
+created becomes the administrator. To run it invite-only instead, set **both**:
+
+```bash
+ADMIN_EMAIL=you@example.com
+ADMIN_PASSWORD=<at least 10 characters>
+```
+
+Setting only one of the pair is treated as a misconfiguration: the app refuses
+to serve (a 500 with a clear message in the logs) rather than quietly leaving
+signup open on an instance you believed was closed. The same applies if
+`ADMIN_PASSWORD` is shorter than the password policy allows. Check the logs
+after enabling it.
+
+**What changes**
+
+- Public signup is disabled. `/signup` explains the instance is invite-only, and
+  the signup action refuses on the server — not just in the UI.
+- The `ADMIN_EMAIL` account is created automatically the first time anyone signs
+  in, with an `admin` role and its own personal workspace. If a user with that
+  address already exists it is elevated to `admin` instead.
+- That account, and **only** that account, can mint instance invites — under
+  **Settings → People** in the user menu. This is gated on the email matching
+  `ADMIN_EMAIL`, not on the `admin` role, so a role-admin from a previously open
+  instance cannot create accounts.
+- New people join through `/join/<token>` links, which can expire (24h / 7 days /
+  never), be single-use or capped, and be bound to a specific email address.
+- Workspace invites still work, but they grant *membership to an existing
+  account* — on a closed instance they no longer offer a signup path.
+
+**About `ADMIN_PASSWORD`**
+
+It is a *bootstrap* credential. It creates the account and is never re-applied:
+changing it later will not reset a password that has already been set, and
+rotating it cannot be used to take over an established account. To re-bootstrap,
+delete the user row. The password is validated against the normal policy on
+first use and is never written to logs.
+
 ## Sharing a board publicly
 
 Board header → **Share** → *Create public link*. Anyone with the link gets a
@@ -247,6 +289,8 @@ and assignee first names. No account required.
 | `DATABASE_URL` | yes | Postgres connection string. Use the pooled endpoint on serverless hosts — the client sets `prepare: false` so PgBouncer/Neon transaction pooling works. |
 | `AUTH_SECRET` | yes | Session signing secret. `openssl rand -base64 32`. |
 | `DATABASE_POOL_MAX` | no | Connections per process (default 10). Lower to 1–3 on serverless. |
+| `ADMIN_EMAIL` | no | With `ADMIN_PASSWORD`, runs the instance invite-only. See [Closed registration](#closed-registration-invite-only-instances). |
+| `ADMIN_PASSWORD` | no | Bootstrap password for that account. At least 10 characters. Never re-applied after creation. |
 | `NQM_ALLOW_REMOTE_MIGRATE` | no | Set to `1` to allow `db:migrate` against a non-local host. A safety catch, not a feature. |
 
 Both required variables are validated at startup with an actionable error.

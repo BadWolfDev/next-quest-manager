@@ -200,6 +200,38 @@ authenticated page.
 Core data stays unguarded on purpose. If a board's lists fail to load, an honest
 error beats rendering an empty board.
 
+**Closed registration is opt-in and enforced server-side.** `ADMIN_EMAIL` +
+`ADMIN_PASSWORD` (both, or neither — one alone throws on first use, surfacing as
+a 500 with a clear log message rather than silently leaving signup open) switch
+the instance to invite-only. `lib/registration.ts` owns the whole thing: config parsing,
+`isClosedRegistration()`, `isEnvAdmin()`, the bootstrap, and instance-invite
+tokens (`nqu_`).
+
+Rules that matter:
+
+- **Only the ADMIN_EMAIL identity mints accounts** — `isEnvAdmin()`, never the
+  `admin` *role*. On an open instance the first signup also gets `role: "admin"`,
+  and that person must not be able to create accounts on an instance somebody
+  else operates. Every export of `actions/user-invites.ts` goes through
+  `requireEnvAdmin()`.
+- **`signUpAction` enforces the mode itself.** The signup page hides its form,
+  but the action is a public endpoint; hiding a form is not access control.
+- **The first-user-becomes-admin rule is suppressed in closed mode.** Otherwise a
+  `/join` signup that landed before the admin's first login would seize the
+  admin role on a fresh instance.
+- **Instance invites (`user_invites`, `nqu_`) are a separate table from workspace
+  invites (`invites`, `nqi_`)** on purpose: one grants an account, the other
+  grants membership to an existing account. Keeping them apart is what stops a
+  workspace invite becoming a signup back door. Do not merge them.
+- **The env password is a bootstrap credential, never re-applied.** An existing
+  user is elevated to `admin`; their password hash is left alone. Re-applying it
+  would let anyone who can read the environment take over an established
+  account, and would silently undo a password the admin had changed.
+- Bootstrap runs **lazily and memoised per process**, from the credentials
+  provider — not at module import (that would open a connection during
+  `next build`) and not in the migrate step (the build box may not hold the
+  credentials).
+
 **Soft deletes.** `archived_at` rather than `DELETE`, so history survives.
 Queries must filter `isNull(archivedAt)` unless they deliberately want archives.
 

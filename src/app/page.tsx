@@ -6,6 +6,7 @@ import { Wordmark } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { getSessionUser } from "@/lib/authorize";
+import { isClosedRegistration } from "@/lib/registration";
 
 const FEATURES = [
   {
@@ -35,18 +36,29 @@ export default async function LandingPage() {
   const user = await getSessionUser();
   if (user) redirect("/app");
 
+  // Invite-only instances have nothing to sign up for.
+  const closed = isClosedRegistration();
+
   return (
     <div className="nqm-surface flex min-h-dvh flex-col">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
         <Wordmark />
         <div className="flex items-center gap-2 sm:gap-3">
           <ThemeToggle className="hidden sm:inline-flex" />
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/login">Sign in</Link>
-          </Button>
-          <Button asChild size="sm">
-            <Link href="/signup">Get started</Link>
-          </Button>
+          {closed ? (
+            <Button asChild size="sm">
+              <Link href="/login">Sign in</Link>
+            </Button>
+          ) : (
+            <>
+              <Button asChild variant="ghost" size="sm">
+                <Link href="/login">Sign in</Link>
+              </Button>
+              <Button asChild size="sm">
+                <Link href="/signup">Get started</Link>
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
@@ -66,19 +78,31 @@ export default async function LandingPage() {
               cards — backed by a schema you can read in one sitting.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Button asChild size="lg">
-                <Link href="/signup">
-                  Create your first board
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
-              <Button asChild size="lg" variant="outline">
-                <Link href="/login">I already have an account</Link>
-              </Button>
+              {closed ? (
+                <Button asChild size="lg">
+                  <Link href="/login">
+                    Sign in
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              ) : (
+                <>
+                  <Button asChild size="lg">
+                    <Link href="/signup">
+                      Create your first board
+                      <ArrowRight className="size-4" />
+                    </Link>
+                  </Button>
+                  <Button asChild size="lg" variant="outline">
+                    <Link href="/login">I already have an account</Link>
+                  </Button>
+                </>
+              )}
             </div>
             <p className="text-muted-foreground mt-4 text-xs">
-              The first account created on a fresh instance becomes its
-              administrator.
+              {closed
+                ? "This instance is invite-only — ask an administrator for an invite link."
+                : "The first account created on a fresh instance becomes its administrator."}
             </p>
           </div>
 

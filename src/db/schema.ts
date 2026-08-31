@@ -458,6 +458,47 @@ export const apiTokens = pgTable(
 export type ApiToken = typeof apiTokens.$inferSelect;
 
 /* -------------------------------------------------------------------------- */
+/* User invites (closed-registration mode)                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Invites to the *instance*, not to a workspace.
+ *
+ * Only used when closed registration is on (ADMIN_EMAIL + ADMIN_PASSWORD set).
+ * Deliberately a separate table from `invites`: a workspace invite grants
+ * membership to an existing account, this one grants an account at all. Keeping
+ * them apart is what stops a workspace invite becoming a signup back door.
+ */
+export const userInvites = pgTable(
+  "user_invites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** SHA-256 of the raw token; the raw value only ever exists in the link. */
+    tokenHash: text("token_hash").notNull(),
+    /** First 12 characters of the raw token, for display. */
+    tokenPrefix: text("token_prefix").notNull().default(""),
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    /** Optional. When set, only this address may redeem the invite. */
+    email: text("email"),
+    /** null = unlimited, 1 = single-use, N = capped. */
+    maxUses: integer("max_uses"),
+    useCount: integer("use_count").notNull().default(0),
+    /** null = never expires. */
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("user_invites_token_hash_unique").on(table.tokenHash),
+    index("user_invites_created_by_idx").on(table.createdBy, table.createdAt),
+  ],
+);
+
+export type UserInvite = typeof userInvites.$inferSelect;
+
+/* -------------------------------------------------------------------------- */
 /* Rate limiting (Postgres-backed — no Redis)                                 */
 /* -------------------------------------------------------------------------- */
 

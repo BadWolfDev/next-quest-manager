@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app/app-shell";
 import { requireUser } from "@/lib/authorize";
 import { countMyUnread } from "@/lib/notifications";
+import { isEnvAdmin } from "@/lib/registration";
 import { safeRead } from "@/lib/safe-read";
 import { listMyBoards, listMyWorkspaces } from "@/lib/queries";
 
@@ -35,6 +36,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         email: user.email,
         image: user.image,
         role: user.role,
+        isEnvAdmin: isEnvAdmin(user.email),
       }}
       workspaces={workspaces}
       boards={boards}

@@ -1,6 +1,7 @@
 "use server";
 
 import { AuthError } from "next-auth";
+
 import { eq, sql as raw } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -11,12 +12,18 @@ import { db } from "@/db";
 import { users, workspaceMembers, workspaces } from "@/db/schema";
 import { recordActivity } from "@/lib/activity";
 import { toActionError, type ActionState } from "@/lib/action-result";
+import { AuthorizationError } from "@/lib/errors";
 import { hashPassword } from "@/lib/password";
 import {
   AUTH_RATE_LIMIT,
   clientIpFromHeaders,
   rateLimit,
 } from "@/lib/rate-limit";
+import {
+  claimUserInviteUse,
+  isClosedRegistration,
+  resolveUserInvite,
+} from "@/lib/registration";
 import { signInSchema, signUpSchema, slugify } from "@/lib/validation";
 
 const nextPathSchema = z
@@ -90,6 +97,44 @@ export async function signUpAction(
     email = input.email;
     password = input.password;
 
+    /*
+      Closed registration is enforced HERE, not in the UI. The signup page
+      hides its form, but this action is a public endpoint and must refuse on
+      its own — hiding a form is not access control.
+    */
+    const closed = isClosedRegistration();
+    const rawInvite = formData.get("inviteToken");
+    const inviteToken =
+      typeof rawInvite === "string" && rawInvite.length > 0 ? rawInvite : null;
+
+    let inviteId: string | null = null;
+
+    if (closed) {
+      if (!inviteToken) {
+        return {
+          ok: false,
+          message:
+            "This instance is invite-only. Ask an administrator for an invite link.",
+        };
+      }
+
+      const resolved = await resolveUserInvite(inviteToken);
+      if (!resolved.ok) {
+        return { ok: false, message: "This invite link can no longer be used." };
+      }
+      if (
+        resolved.invite.email &&
+        resolved.invite.email.toLowerCase() !== input.email
+      ) {
+        return {
+          ok: false,
+          message: "This invite was issued for a different email address.",
+          fields: { email: "Does not match the invite." },
+        };
+      }
+      inviteId = resolved.invite.id;
+    }
+
     const ip = clientIpFromHeaders(new Headers(await headers()));
     const limited = await rateLimit({
       key: `signup:${ip}`,
@@ -119,11 +164,25 @@ export async function signUpAction(
     const passwordHash = await hashPassword(password);
 
     await db.transaction(async (tx) => {
-      // The very first account on a fresh instance becomes the admin.
+      // Claim the invite in the same transaction that creates the user, so a
+      // failure anywhere below gives the seat back.
+      if (inviteId) {
+        const claimed = await claimUserInviteUse(tx, inviteId);
+        if (!claimed) {
+          throw new AuthorizationError("This invite is no longer usable.");
+        }
+      }
+
+      /*
+        The very first account on an OPEN instance becomes the admin. Never in
+        closed mode: the bootstrap admin is created on first login, so a /join
+        signup that happened first would otherwise seize the admin role on an
+        instance somebody else operates.
+      */
       const [{ count }] = await tx
         .select({ count: raw<number>`count(*)::int` })
         .from(users);
-      const isFirstUser = Number(count) === 0;
+      const isFirstUser = !closed && Number(count) === 0;
 
       const [user] = await tx
         .insert(users)

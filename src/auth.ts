@@ -12,6 +12,7 @@ import {
   clientIpFromHeaders,
   rateLimit,
 } from "@/lib/rate-limit";
+import { ensureBootstrapAdmin } from "@/lib/registration";
 import { signInSchema } from "@/lib/validation";
 
 /**
@@ -32,6 +33,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const parsed = signInSchema.safeParse(credentials);
         if (!parsed.success) return null;
         const { email, password } = parsed.data;
+
+        // Lazily create the ADMIN_EMAIL account the first time anyone tries to
+        // authenticate. Memoised per process; a no-op when closed registration
+        // is off. Doing it here rather than at import keeps `next build` from
+        // opening a database connection.
+        await ensureBootstrapAdmin();
 
         // Throttle per IP + email so neither a single account nor a single
         // source address can be brute-forced. Fails closed.

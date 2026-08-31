@@ -1,6 +1,13 @@
 "use client";
 
-import { ChevronsUpDown, KeyRound, LogOut, Palette, ShieldCheck } from "lucide-react";
+import {
+  ChevronsUpDown,
+  KeyRound,
+  LogOut,
+  Palette,
+  ShieldCheck,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -21,6 +28,8 @@ export type UserMenuUser = {
   email: string;
   image: string | null;
   role: "user" | "admin";
+  /** True only for the ADMIN_EMAIL identity on a closed instance. */
+  isEnvAdmin: boolean;
 };
 
 function initials(name: string) {
@@ -91,6 +100,15 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
             Access tokens
           </Link>
         </DropdownMenuItem>
+
+        {user.isEnvAdmin ? (
+          <DropdownMenuItem asChild>
+            <Link href="/settings/users" className="cursor-pointer">
+              <Users className="size-4" />
+              People
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
 
         <DropdownMenuSeparator />
 
