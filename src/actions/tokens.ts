@@ -9,6 +9,7 @@ import { apiTokens } from "@/db/schema";
 import { toActionError, type ActionState } from "@/lib/action-result";
 import { generateToken } from "@/lib/api-tokens";
 import { requireUser } from "@/lib/authorize";
+import { relativeLabel } from "@/lib/format";
 import { uuidSchema } from "@/lib/validation";
 
 const createTokenSchema = z.object({
@@ -117,16 +118,6 @@ export type TokenRow = {
   lastUsedLabel: string;
   expiresLabel: string | null;
 };
-
-function relativeLabel(date: Date | null): string {
-  if (!date) return "never";
-  const minutes = Math.floor((Date.now() - date.getTime()) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
 
 /** The caller's own tokens, newest first. Revoked ones are not listed. */
 export async function listMyTokens(): Promise<TokenRow[]> {

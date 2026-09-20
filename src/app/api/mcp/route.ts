@@ -1,6 +1,9 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 
-import { resolveApiToken } from "@/lib/api-tokens";
+import { resolveApiToken, TOKEN_PREFIX } from "@/lib/api-tokens";
+import type { Actor } from "@/lib/authorize";
+import { resolveOauthAccessToken } from "@/lib/core/oauth";
+import { ACCESS_TOKEN_PREFIX, SCOPE_READ, SCOPE_WRITE } from "@/lib/oauth";
 import { rateLimit } from "@/lib/rate-limit";
 import {
   registerTools,
@@ -34,27 +37,58 @@ const handler = createMcpHandler(registerTools, {
   maxSubscriptions: 0,
 });
 
-const authed = withMcpAuth(
-  handler,
-  async (_req, bearerToken) => {
-    if (!bearerToken) return undefined;
-
+/**
+ * Resolve a bearer token to an acting user.
+ *
+ * Two token families reach this endpoint and they are told apart by prefix, not
+ * by trying one lookup and falling through to the other:
+ *
+ *  - `nqm_` — a personal access token, pasted by a human into a headless client.
+ *  - `nqo_` — an OAuth access token, issued by this instance's own
+ *    authorization server after a browser consent flow.
+ *
+ * Both collapse to the same `McpTokenExtra`, so nothing downstream — not the
+ * tools, not `lib/authorize.ts`, not `board-ops` — has any idea which one was
+ * used. That is the point: adding OAuth added a front door, not a code path.
+ */
+async function resolveBearer(
+  bearerToken: string,
+): Promise<{ extra: McpTokenExtra; scopes: string[]; rateKey: string } | null> {
+  if (bearerToken.startsWith(TOKEN_PREFIX)) {
     const resolved = await resolveApiToken(bearerToken);
-    // Unknown, revoked, expired, or orphaned — all indistinguishable to the
-    // caller, which gets a plain 401.
-    if (!resolved) return undefined;
+    if (!resolved) return null;
+    return authenticated(
+      resolved,
+      resolved.readOnly ? [SCOPE_READ] : [SCOPE_READ, SCOPE_WRITE],
+    );
+  }
 
-    // Generous ceiling: an agent walking a board legitimately makes many calls.
-    // Keyed on the token, so one noisy agent cannot throttle another. Uses the
-    // same Postgres limiter as sign-in, and fails closed.
-    const limited = await rateLimit({
-      key: `mcp:${resolved.tokenId}`,
-      limit: 300,
-      windowSeconds: 60,
-    });
-    if (!limited.ok) return undefined;
+  if (bearerToken.startsWith(ACCESS_TOKEN_PREFIX)) {
+    const resolved = await resolveOauthAccessToken(bearerToken);
+    if (!resolved) return null;
+    // `readOnly` is derived from the absence of `nqm:write`, so a grant that
+    // never asked for write is refused by `mutating()` exactly as a read-only
+    // personal access token is.
+    return authenticated(resolved, resolved.scope.split(/\s+/).filter(Boolean));
+  }
 
-    const extra: McpTokenExtra = {
+  return null;
+}
+
+/**
+ * The one shape both token families collapse to. Written once so the two
+ * branches above cannot drift — an OAuth grant that carried, say, a different
+ * `readOnly` rule would be a second authorization path, which is the thing this
+ * endpoint exists not to have.
+ */
+function authenticated(
+  resolved: { actor: Actor; tokenId: string; readOnly: boolean },
+  scopes: string[],
+): { extra: McpTokenExtra; scopes: string[]; rateKey: string } {
+  return {
+    rateKey: `mcp:${resolved.tokenId}`,
+    scopes,
+    extra: {
       userId: resolved.actor.id,
       email: resolved.actor.email,
       name: resolved.actor.name,
@@ -62,16 +96,45 @@ const authed = withMcpAuth(
       role: resolved.actor.role,
       tokenId: resolved.tokenId,
       readOnly: resolved.readOnly,
-    };
+    },
+  };
+}
+
+const authed = withMcpAuth(
+  handler,
+  async (_req, bearerToken) => {
+    if (!bearerToken) return undefined;
+
+    const resolved = await resolveBearer(bearerToken);
+    // Unknown, revoked, expired, or orphaned — all indistinguishable to the
+    // caller, which gets a plain 401 carrying the resource metadata pointer.
+    if (!resolved) return undefined;
+
+    // Generous ceiling: an agent walking a board legitimately makes many calls.
+    // Keyed on the token, so one noisy agent cannot throttle another. Uses the
+    // same Postgres limiter as sign-in, and fails closed.
+    const limited = await rateLimit({
+      key: resolved.rateKey,
+      limit: 300,
+      windowSeconds: 60,
+    });
+    if (!limited.ok) return undefined;
 
     return {
       token: bearerToken,
-      clientId: resolved.tokenId,
-      scopes: resolved.readOnly ? ["nqm:read"] : ["nqm:read", "nqm:write"],
-      extra: extra as unknown as Record<string, unknown>,
+      clientId: resolved.extra.tokenId,
+      scopes: resolved.scopes,
+      extra: resolved.extra as unknown as Record<string, unknown>,
     };
   },
-  { required: true },
+  {
+    required: true,
+    // Makes the 401 carry
+    // `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource"`,
+    // which is how an MCP client discovers that this instance *is* its own
+    // authorization server and starts the consent flow unprompted.
+    resourceMetadataPath: "/.well-known/oauth-protected-resource",
+  },
 );
 
 export { authed as GET, authed as POST, authed as DELETE };

@@ -550,6 +550,192 @@ export const userInvites = pgTable(
 export type UserInvite = typeof userInvites.$inferSelect;
 
 /* -------------------------------------------------------------------------- */
+/* OAuth 2.1 authorization server                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * NQM is its own authorization server, so MCP clients can connect through the
+ * browser consent flow instead of a pasted personal access token. Everything it
+ * needs is four tables — no external identity provider, no second service.
+ *
+ * Every secret in here is stored the way personal access tokens are: a SHA-256
+ * hex digest of a 256-bit random value under a unique index. One indexed
+ * lookup, nothing to brute-force, and nothing recoverable from a database dump.
+ */
+
+export const oauthTokenKindEnum = pgEnum("oauth_token_kind", [
+  "access",
+  "refresh",
+]);
+
+/**
+ * A client registered through RFC 7591 dynamic client registration.
+ *
+ * Registration is open and unauthenticated (that is what lets Claude.ai and
+ * Cursor register themselves), so a row here grants nothing on its own: it is
+ * only ever a *name* the consent screen shows a human before that human hands
+ * out access. The `redirect_uris` list is the security-relevant field — a code
+ * can only ever be delivered to a URI that was registered here.
+ */
+export const oauthClients = pgTable(
+  "oauth_clients",
+  {
+    /** The `client_id` itself, `nqc_<43 chars base64url>`. */
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    clientUri: text("client_uri"),
+    logoUri: text("logo_uri"),
+    /** Exact-match allowlist. A code is never sent anywhere else. */
+    redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+    grantTypes: jsonb("grant_types").$type<string[]>().notNull(),
+    /** "none" for public (PKCE-only) clients, or a client_secret_* method. */
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method")
+      .notNull()
+      .default("none"),
+    /** SHA-256 of the client secret; null for public clients. */
+    secretHash: text("secret_hash"),
+    /** Space-separated ceiling on what this client may ever ask for. */
+    scope: text("scope").notNull(),
+    lastUsedAt: timestamp("last_used_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: createdAt(),
+  },
+  (table) => [index("oauth_clients_created_idx").on(table.createdAt)],
+);
+
+export type OauthClient = typeof oauthClients.$inferSelect;
+
+/**
+ * A short-lived authorization code, bound to one client, one user, one
+ * redirect URI and one PKCE challenge.
+ *
+ * `used_at` makes it single-use: the token endpoint claims it with a
+ * conditional UPDATE, so two simultaneous redemptions cannot both win. The row
+ * deliberately survives its own redemption — presenting a used code is the
+ * signature of a stolen code, and RFC 6749 §4.1.2 asks us to revoke everything
+ * that code produced. We can only do that if the row is still here to identify
+ * the family (see `oauth_tokens.family_id`, which *is* this row's id).
+ */
+export const oauthAuthorizationCodes = pgTable(
+  "oauth_authorization_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** SHA-256 of `nqa_<43 chars base64url>`; the raw code lives in one redirect. */
+    codeHash: text("code_hash").notNull(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    redirectUri: text("redirect_uri").notNull(),
+    scope: text("scope").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    codeChallengeMethod: text("code_challenge_method").notNull(),
+    /** RFC 8707 audience, when the client sent one. */
+    resource: text("resource"),
+    expiresAt: timestamp("expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("oauth_codes_code_hash_unique").on(table.codeHash),
+    index("oauth_codes_expires_idx").on(table.expiresAt),
+    index("oauth_codes_user_idx").on(table.userId),
+    index("oauth_codes_client_idx").on(table.clientId),
+  ],
+);
+
+/**
+ * Access and refresh tokens.
+ *
+ * `family_id` is the id of the authorization code the pair descends from, so
+ * one column answers both "revoke everything this stolen code produced" and
+ * "revoke everything this replayed refresh token belongs to". Refresh tokens
+ * rotate: redeeming one revokes it in the same transaction that issues its
+ * replacement, so presenting a revoked refresh token again means somebody kept
+ * a copy, and the whole family dies. There is no `replaced_by` pointer — the
+ * family id already answers every question reuse detection asks, and a column
+ * nothing reads is a column that will drift.
+ */
+export const oauthTokens = pgTable(
+  "oauth_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The originating authorization code's id. Not a FK: codes get pruned. */
+    familyId: uuid("family_id").notNull(),
+    kind: oauthTokenKindEnum("kind").notNull(),
+    /** SHA-256 of `nqo_…` (access) or `nqr_…` (refresh). */
+    tokenHash: text("token_hash").notNull(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    resource: text("resource"),
+    expiresAt: timestamp("expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    lastUsedAt: timestamp("last_used_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("oauth_tokens_token_hash_unique").on(table.tokenHash),
+    index("oauth_tokens_user_idx").on(table.userId, table.createdAt),
+    index("oauth_tokens_client_idx").on(table.clientId),
+    index("oauth_tokens_family_idx").on(table.familyId),
+    index("oauth_tokens_expires_idx").on(table.expiresAt),
+  ],
+);
+
+export type OauthToken = typeof oauthTokens.$inferSelect;
+
+/**
+ * "This person has connected this app."
+ *
+ * Kept apart from the tokens so the Connected apps screen still has something
+ * true to show after every token in a grant has expired, and so revoking a
+ * grant is one row to delete rather than an inference over token rows.
+ */
+export const oauthConsents = pgTable(
+  "oauth_consents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oauthClients.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex("oauth_consents_user_client_unique").on(
+      table.userId,
+      table.clientId,
+    ),
+    index("oauth_consents_user_idx").on(table.userId),
+    index("oauth_consents_client_idx").on(table.clientId),
+  ],
+);
+
+export type OauthConsent = typeof oauthConsents.$inferSelect;
+
+/* -------------------------------------------------------------------------- */
 /* Rate limiting (Postgres-backed — no Redis)                                 */
 /* -------------------------------------------------------------------------- */
 

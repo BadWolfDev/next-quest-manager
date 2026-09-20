@@ -5,6 +5,7 @@ import {
   KeyRound,
   LogOut,
   Palette,
+  Plug,
   ShieldCheck,
   UserRound,
   Users,
@@ -106,6 +107,13 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
           <Link href="/settings/tokens" className="cursor-pointer">
             <KeyRound className="size-4" />
             Access tokens
+          </Link>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem asChild>
+          <Link href="/settings/apps" className="cursor-pointer">
+            <Plug className="size-4" />
+            Connected apps
           </Link>
         </DropdownMenuItem>
 

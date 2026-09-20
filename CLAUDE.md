@@ -152,6 +152,47 @@ argument — any caller could name any user. Shared logic that needs an explicit
 actor lives in `src/lib/` (see `lib/core/members.ts`), and the action wrapper
 calls it with no actor so the caller is session-resolved.
 
+**OAuth 2.1 authorization server — a second front door, same house.** NQM
+issues its own tokens (`src/lib/oauth.ts` pure half, `src/lib/core/oauth.ts`
+stateful half, `/api/oauth/*` endpoints, `/oauth/authorize` consent page). A
+self-hosted authorization server rather than a dependency on one, for the same
+reason rate limiting is a table: adding a required second service breaks the
+deployment promise. There is no new environment variable — the issuer origin is
+derived from the request.
+
+Rules that carry:
+
+- **PKCE with S256 or nothing.** There is no `plain` branch anywhere and the
+  metadata does not advertise one. `code_challenge_method` is required at
+  `/oauth/authorize`, not defaulted.
+- **Every secret is a 256-bit random value stored as a SHA-256 digest** under a
+  unique index — client secrets, authorization codes, access and refresh
+  tokens. Same reasoning as `nqm_` tokens: nothing to brute-force, and
+  verification must be one indexed lookup rather than ~20ms of argon2.
+- **Rotation plus replay revocation.** `oauth_tokens.family_id` *is* the
+  originating authorization code's id, so "revoke everything this replayed code
+  produced" and "revoke everything this reused refresh token belongs to" are
+  the same indexed UPDATE. A failed exchange still burns the code.
+- **The consent action re-validates the whole request.** `src/actions/oauth.ts`
+  re-loads the client and re-checks the redirect URI, PKCE challenge, scope
+  ceiling and audience from the submitted fields. The consent page's hidden
+  inputs are a convenience for the browser, not a trusted channel — that form
+  is as reachable by a script as by the screen that rendered it.
+- **Redirect URIs match exactly.** No RFC 8252 §7.3 loopback-port relaxation:
+  an arbitrary port on a registered loopback URI means any local process can
+  receive somebody else's code. An unknown `client_id` or an unregistered
+  `redirect_uri` is *rendered*, never redirected (RFC 6749 §4.1.2.1) —
+  redirecting would make the endpoint a forwarder to any URL in a query string.
+- **`authorize()` knows nothing about OAuth**, exactly as it knows nothing about
+  share tokens. An access token resolves to an `Actor` and then goes through
+  the same membership joins as a session. Never add a token branch there, and
+  never add an OAuth-specific query to `board-ops`.
+- **Registration is open, and grants nothing.** RFC 7591 has to be
+  unauthenticated for a hosted client to introduce itself to an instance it has
+  never seen. A row is a name and a redirect allowlist; access only ever comes
+  from a signed-in human approving the consent screen. It is rate-limited per
+  IP and, like every use of `rateLimit`, fails closed.
+
 **Skins are a token layer, not forked components.** `globals.css` defines each
 skin under `:root[data-theme="pixel"|"grid"|"retro"]` and maps the handoff's
 palette onto the *existing* shadcn variables (`--background`, `--card`,
@@ -287,12 +328,17 @@ shared constants live in `src/lib/palette.ts`.
 src/
   actions/        auth.ts, boards.ts, workspaces.ts, session.ts,
                   account.ts (own profile + password), comments.ts, labels.ts,
-                  archive.ts (restore card / list)
+                  archive.ts (restore card / list),
+                  oauth.ts (consent decision + connected apps)
   app/
-    (auth)/       /login, /signup — centred card layout
+    (auth)/       /login, /signup, /oauth/authorize — centred card layout
     (app)/        authenticated shell: /app, /w/[workspaceSlug], /b/[boardId]
     api/auth/     Auth.js route handler (Node runtime)
-    api/cron/     due-reminders — CRON_SECRET-authenticated due-date sweep
+    api/cron/     due-reminders — CRON_SECRET-authenticated due-date sweep,
+                  plus the OAuth code/token prune
+    api/oauth/    register (RFC 7591), token, revoke (RFC 7009)
+    .well-known/  oauth-authorization-server (RFC 8414),
+                  oauth-protected-resource (RFC 9728)
     page.tsx      signed-out landing page
   components/
     ui/           shadcn/ui primitives — regenerate, don't hand-edit
@@ -303,19 +349,24 @@ src/
     board/        dnd-kit board: board-view, sortable-list, sortable-card,
                   list-header, add-card, add-list, board-state (pure reducer),
                   assignee-popover, activity-panel, use-board-freshness
-    settings/     token, member and workspace management UIs
+    settings/     token, member, connected-app and workspace management UIs
+    oauth/        consent-screen — the OAuth approval dialog
     invites/      accept-invite form
   db/             schema.ts (single source of truth), index.ts (client singleton)
   hooks/          use-mounted (hydration gate)
   lib/            authorize, queries, rate-limit, password, positions, env,
                   validation, errors, api-tokens, invites, notifications,
                   mentions.ts (pure @mention resolution, no DB)
+                  oauth.ts — PKCE, scopes, redirect rules, discovery metadata;
+                  deliberately DB-free so it is unit-testable
     core/         board-ops.ts, members.ts — the single implementation of every
                   board mutation and read, shared by server actions and MCP
                   public-board.ts — the isolated, session-free public read path
                   due-reminders.ts — the cron sweep; a system job with no
                   session, so it scopes recipients through workspace_members
                   in SQL instead of calling an authorize() helper
+                  oauth.ts / oauth-cleanup.ts — the OAuth server's stateful
+                  half and its housekeeping
   skin.ts         skin list, storage keys, the no-flash inline script
   mcp/            server.ts — MCP tool definitions
   auth.ts         Auth.js, Node runtime (providers + DB)

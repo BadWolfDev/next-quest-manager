@@ -3,13 +3,22 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { sendDueReminders } from "@/lib/core/due-reminders";
+import { cleanupOauth } from "@/lib/core/oauth-cleanup";
 import { logError } from "@/lib/log-error";
+import { pruneRateLimits } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Due-date reminder sweep.
+ * Due-date reminder sweep, plus OAuth housekeeping.
+ *
+ * Three steps, one schedule: the reminders, then a prune of expired
+ * authorization codes and long-dead OAuth tokens, then a prune of stale rate
+ * limit windows. The second step is bundled
+ * here rather than given its own route because NQM has to run on a Vercel
+ * free-tier project, which allows a small number of cron entries — and because
+ * neither job needs to be on time.
  *
  * Runs from Vercel Cron (see `vercel.json`) or from any scheduler a
  * self-hoster prefers — it is a plain authenticated GET, so `curl` in a
@@ -42,7 +51,21 @@ export async function GET(request: Request) {
 
   try {
     const summary = await sendDueReminders();
-    return NextResponse.json(summary, {
+    // Housekeeping, not correctness: a failed prune must not make the sweep
+    // look like it failed, so it is reported rather than thrown.
+    const oauth = await cleanupOauth().catch((error) => {
+      logError("[cron/due-reminders] oauth cleanup", error);
+      return null;
+    });
+
+    // `rate_limits` is written by every unauthenticated endpoint — sign-in,
+    // registration, the token endpoint — and nothing else ever deletes from
+    // it, so the sweep is the only thing keeping it from growing forever.
+    await pruneRateLimits().catch((error) => {
+      logError("[cron/due-reminders] rate limit prune", error);
+    });
+
+    return NextResponse.json({ ...summary, oauth }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
