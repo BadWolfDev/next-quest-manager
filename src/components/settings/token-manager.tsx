@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
@@ -132,6 +133,16 @@ export function TokenManager({ tokens }: { tokens: TokenRow[] }) {
             Personal access tokens let AI agents reach your boards over MCP.
             A token acts as you — it can see exactly the workspaces you belong
             to, and nothing else.
+          </p>
+          <p className="text-muted-foreground mt-2 max-w-prose text-sm leading-relaxed">
+            For Claude.ai, Claude Code and Cursor, prefer connecting over OAuth:
+            add this instance as an MCP connector and approve it in the browser.
+            You get revocable, expiring tokens with no secret to paste, and the
+            grant shows up under{" "}
+            <Link href="/settings/apps" className="underline">
+              Connected apps
+            </Link>
+            . Tokens are still the right tool for scripts and headless agents.
           </p>
         </div>
         <Button onClick={() => setCreating(true)}>

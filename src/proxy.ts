@@ -46,13 +46,22 @@ export const config = {
   matcher: [
     /*
      * Everything except Next internals, static assets, the Auth.js endpoints,
-     * the MCP endpoint and the cron endpoints.
+     * the MCP endpoint, the cron endpoints and the OAuth machinery.
      *
      * `/api/mcp` and `/api/cron/*` authenticate with a bearer token, not a
      * session cookie. If they were matched here, every such request would be
      * answered with a 307 to /login instead of the 401 the caller expects —
      * and the cron sweep would never reach its handler at all.
+     *
+     * `/.well-known/*` and `/api/oauth/*` are the OAuth discovery, registration
+     * and token endpoints. They are called by machines with no cookie jar, so a
+     * 307 to /login would break discovery entirely.
+     *
+     * `/oauth/authorize` is deliberately **not** exempt: it is the one OAuth
+     * surface that needs a human, and being matched here is exactly what sends
+     * a signed-out visitor to /login?next=… with the authorization request
+     * intact.
      */
-    "/((?!api/auth|api/mcp|api/cron|api/public|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api/auth|api/mcp|api/cron|api/oauth|api/public|\\.well-known|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

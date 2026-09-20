@@ -186,24 +186,64 @@ NQM speaks the [Model Context Protocol](https://modelcontextprotocol.io) at
 `/api/mcp` over Streamable HTTP — inside the same app, no extra process, no
 Redis.
 
+There are two ways in. **OAuth is the one you want** for interactive clients;
+personal access tokens remain for scripts and headless agents.
+
+### Connect over OAuth (recommended)
+
+NQM is its own OAuth 2.1 authorization server. There is nothing to configure
+and nothing to paste: point a client at `/api/mcp`, it discovers the
+authorization server from the `401`, registers itself, and opens your browser
+so you can approve it.
+
+```bash
+# Claude Code
+claude mcp add --transport http nqm https://<your-host>/api/mcp
+```
+
+For **claude.ai**, add a custom connector with the URL
+`https://<your-host>/api/mcp` — no header. For **Cursor, Windsurf, VS Code and
+the MCP Inspector**:
+
+```json
+{
+  "mcpServers": {
+    "nqm": {
+      "type": "http",
+      "url": "https://<your-host>/api/mcp"
+    }
+  }
+}
+```
+
+You will be sent to a consent screen that names the application and the two
+things it can ask for — read your boards, and change them. Approved apps are
+listed under **User menu → Connected apps**, where **Disconnect** revokes every
+token they hold, immediately.
+
+Under the hood: PKCE with S256 is mandatory, access tokens last an hour,
+refresh tokens rotate on every use, and a reused refresh token or a replayed
+authorization code revokes the whole family. Everything lives in Postgres —
+no extra service, no extra environment variable. Discovery is at
+`/.well-known/oauth-authorization-server` and
+`/.well-known/oauth-protected-resource`.
+
+### Connect with a personal access token
+
+Better for cron jobs, CI and anything with no browser.
+
 **1. Create a token.** User menu → **Access tokens** → New token. It's shown
 once; only a SHA-256 hash is stored. Tick **read-only** for a token that can
 read and search but never change anything.
 
 A token acts as *you*: it sees exactly the workspaces you belong to.
 
-**2. Point your client at it.**
+**2. Send it as a bearer token.**
 
 ```bash
-# Claude Code
 claude mcp add --transport http nqm https://<your-host>/api/mcp \
   --header "Authorization: Bearer nqm_..."
 ```
-
-For **claude.ai**, add a custom connector with the URL
-`https://<your-host>/api/mcp` and an `Authorization: Bearer nqm_...` header.
-
-For **Cursor, Windsurf and most other clients**:
 
 ```json
 {
@@ -234,8 +274,9 @@ Read-only tools carry `readOnlyHint` and the archiving and deleting ones carry
 change is written to the activity log tagged `source: "mcp"` and shown with a
 "via MCP" marker in the board's activity panel.
 
-**Limits:** 300 requests per minute per token. Authentication is personal access
-tokens only — OAuth 2.1 is on the roadmap.
+**Limits:** 300 requests per minute per token, whether it is an OAuth access
+token or a personal access token. An OAuth grant without the `nqm:write` scope
+is refused by every mutating tool, exactly as a read-only token is.
 
 ---
 

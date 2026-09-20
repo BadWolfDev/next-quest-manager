@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { logError } from "@/lib/log-error";
 
 import { sql as raw } from "drizzle-orm";
@@ -98,6 +100,20 @@ export function clientIpFromHeaders(headers: Headers): string {
     if (first) return first;
   }
   return headers.get("x-real-ip")?.trim() || "unknown";
+}
+
+/**
+ * Bound an untrusted segment of a rate-limit key.
+ *
+ * `key` is the primary key of `rate_limits`, and several callers build it from
+ * values an unauthenticated caller chose — a `client_id` in a form body, an
+ * `x-forwarded-for` header. A caller who can choose an arbitrarily long key
+ * chooses how much of the table a single request writes, so anything over
+ * `maxLength` collapses to a digest: still a stable bucket, fixed size.
+ */
+export function boundedKeyPart(value: string, maxLength = 64): string {
+  if (value.length <= maxLength) return value;
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 export const AUTH_RATE_LIMIT = {
