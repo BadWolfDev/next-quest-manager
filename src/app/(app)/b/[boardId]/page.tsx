@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { listAssignableMembersFor } from "@/lib/core/members";
+import { labelVocabularyForBoard } from "@/lib/core/board-ops";
+import { BoardMenu } from "@/components/board/board-menu";
 import { BoardView } from "@/components/board/board-view";
 import { ShareDialog } from "@/components/board/share-dialog";
 import { safeRead } from "@/lib/safe-read";
@@ -51,6 +53,14 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
     [],
   );
 
+  // The filter bar's label vocabulary. A board with no labels still filters by
+  // text, assignee and due date, so a failure here costs one control.
+  const labels = await safeRead(
+    "board.labels",
+    () => labelVocabularyForBoard(board.id),
+    [] as { id: string; name: string; color: string }[],
+  );
+
   // The share token is read here — already inside the authorised board context
   // — rather than widening BoardContext for one screen.
   const shareUrl = await safeRead(
@@ -92,6 +102,13 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
                 style={{ background: board.background.value }}
               />
               {board.name}
+              <BoardMenu
+                boardId={board.id}
+                boardName={board.name}
+                workspaceSlug={workspace.slug}
+                canWrite={canWrite}
+                canArchive={role === "owner" || role === "admin"}
+              />
             </h1>
           </div>
           <div className="flex items-center gap-2">
@@ -113,6 +130,7 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
         <BoardView
           boardId={board.id}
           members={members}
+          labels={labels}
           canWrite={canWrite}
           lists={lists.map((list) => ({
             id: list.id,

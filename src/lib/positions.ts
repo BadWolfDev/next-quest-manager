@@ -31,7 +31,11 @@ export type Placement = {
  * `siblings` must be every *other* non-archived item in the destination
  * container, already ordered by position ascending (the moved item excluded).
  * `afterId` is the sibling the item should follow; `beforeId` the one it should
- * precede. Either may be null for "at the start" / "at the end".
+ * precede. Either may be null for "at the start" / "at the end"; both null means
+ * "no constraints", which appends.
+ *
+ * The returned position is always strictly between its real neighbours in the
+ * destination container and never equal to an existing sibling's key.
  */
 export function placeBetween(
   siblings: Positioned[],
@@ -48,22 +52,45 @@ export function placeBetween(
   // A neighbour id that isn't actually in the destination container is either a
   // stale client or a forged request; treat it as "not specified" rather than
   // trusting it. The caller separately verifies neighbour ownership.
-  const lower = afterIndex >= 0 ? siblings[afterIndex] : null;
-  const upper = beforeIndex >= 0 ? siblings[beforeIndex] : null;
+  //
+  // Whenever only one bound is usable the *other* one is taken from the sibling
+  // array rather than left open. An unbounded call is not safe: appending after
+  // "a0" with no upper bound yields "a1", which is exactly the key the next
+  // sibling already holds, and two rows with the same position have no defined
+  // order at all.
+  let lower: Positioned | null;
+  let upper: Positioned | null;
+  // Only trust a caller-supplied pair when it really is still adjacent.
+  let adjacent = true;
 
-  // Only trust the pair when it really is adjacent and correctly ordered.
-  const adjacent =
-    lower && upper ? beforeIndex === afterIndex + 1 : true;
+  if (afterIndex >= 0 && beforeIndex >= 0) {
+    lower = siblings[afterIndex];
+    upper = siblings[beforeIndex];
+    adjacent = beforeIndex === afterIndex + 1;
+  } else if (afterIndex >= 0) {
+    lower = siblings[afterIndex];
+    upper = siblings[afterIndex + 1] ?? null;
+  } else if (beforeIndex >= 0) {
+    lower = siblings[beforeIndex - 1] ?? null;
+    upper = siblings[beforeIndex];
+  } else {
+    // No usable neighbour at all means "no constraints": append to the end. On
+    // an empty container that is the base key; on a non-empty one the base key
+    // would collide with the first sibling.
+    lower = siblings.length > 0 ? siblings[siblings.length - 1] : null;
+    upper = null;
+  }
 
   if (adjacent && (!lower || !upper || lower.position < upper.position)) {
     try {
-      return {
-        position: generateKeyBetween(
-          lower?.position ?? null,
-          upper?.position ?? null,
-        ),
-        rebalanced: [],
-      };
+      const position = generateKeyBetween(
+        lower?.position ?? null,
+        upper?.position ?? null,
+      );
+      // A key equal to a sibling's is not a placement, it is a tie. Renumber.
+      if (!siblings.some((s) => s.position === position)) {
+        return { position, rebalanced: [] };
+      }
     } catch {
       // Fall through to a rebalance.
     }

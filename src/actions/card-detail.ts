@@ -7,14 +7,19 @@ import { toActionError, type ActionState } from "@/lib/action-result";
 import {
   addChecklistItem,
   archiveCard,
+  copyCard,
   createChecklist,
   createLabel,
   deleteChecklistItem,
   moveCard,
+  moveCardToBoard,
+  moveChecklistItem,
   resolvePlacement,
   setCardLabel,
   toggleChecklistItem,
+  unwatchCard,
   updateCard,
+  watchCard,
 } from "@/lib/core/board-ops";
 import { cardTitleSchema, hexColorSchema, uuidSchema } from "@/lib/validation";
 
@@ -35,11 +40,33 @@ const boardPath = (boardId: string) => `/b/${boardId}`;
 
 /* ------------------------------- card ---------------------------------- */
 
+/**
+ * An ISO 8601 timestamp, or null to clear the due date.
+ *
+ * Parsed here rather than handed to `new Date()` downstream: an unparseable
+ * string would become `Invalid Date` and reach Postgres as a range error
+ * rather than a field-level message.
+ */
+const dueDateSchema = z
+  .string()
+  .trim()
+  .nullable()
+  .transform((value, ctx) => {
+    if (value === null || value === "") return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      ctx.addIssue({ code: "custom", message: "That is not a valid date." });
+      return z.NEVER;
+    }
+    return parsed;
+  });
+
 const updateCardSchema = z.object({
   cardId: uuidSchema,
   boardId: uuidSchema,
   title: cardTitleSchema.optional(),
   description: z.string().max(20_000).nullable().optional(),
+  dueDate: dueDateSchema.optional(),
 });
 
 export async function updateCardDetailAction(
@@ -49,6 +76,7 @@ export async function updateCardDetailAction(
   try {
     const rawTitle = formData.get("title");
     const rawDescription = formData.get("description");
+    const rawDueDate = formData.get("dueDate");
 
     const input = updateCardSchema.parse({
       cardId: formData.get("cardId"),
@@ -57,6 +85,10 @@ export async function updateCardDetailAction(
       ...(typeof rawDescription === "string"
         ? { description: rawDescription.length > 0 ? rawDescription : null }
         : {}),
+      // A field absent from the form leaves the due date alone; an empty
+      // string clears it. That distinction is why this is read from FormData
+      // rather than defaulted in the schema.
+      ...(typeof rawDueDate === "string" ? { dueDate: rawDueDate } : {}),
     });
 
     const { boardId } = await updateCard(
@@ -66,6 +98,7 @@ export async function updateCardDetailAction(
         ...(input.description !== undefined
           ? { description: input.description }
           : {}),
+        ...(input.dueDate !== undefined ? { dueDate: input.dueDate } : {}),
       },
       { source: "ui" },
     );
@@ -296,6 +329,154 @@ export async function deleteChecklistItemAction(
       { itemId: input.itemId },
       { source: "ui" },
     );
+    revalidatePath(boardPath(boardId));
+    return { ok: true };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+/** Duplicate a card into a list, which may be on another board. */
+export async function copyCardAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const rawTitle = formData.get("title");
+
+    const input = z
+      .object({
+        cardId: uuidSchema,
+        targetListId: uuidSchema,
+        title: cardTitleSchema.optional(),
+      })
+      .parse({
+        cardId: formData.get("cardId"),
+        targetListId: formData.get("targetListId"),
+        ...(typeof rawTitle === "string" && rawTitle.trim().length > 0
+          ? { title: rawTitle }
+          : {}),
+      });
+
+    const { boardId } = await copyCard(input, { source: "ui" });
+
+    revalidatePath(boardPath(boardId));
+    return { ok: true, message: "Card copied." };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+/**
+ * Move a card to a list on another board.
+ *
+ * Both boards are revalidated from the ids the *core* returns, so the card
+ * disappears from the old board for everyone who is looking at it.
+ */
+export async function moveCardToBoardAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const input = z
+      .object({ cardId: uuidSchema, targetListId: uuidSchema })
+      .parse({
+        cardId: formData.get("cardId"),
+        targetListId: formData.get("targetListId"),
+      });
+
+    const { boardId, fromBoardId } = await moveCardToBoard(input, {
+      source: "ui",
+    });
+
+    revalidatePath(boardPath(fromBoardId));
+    revalidatePath(boardPath(boardId));
+    return { ok: true, message: "Card moved." };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+/* ------------------------------ watching -------------------------------- */
+
+export async function watchCardAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const { cardId } = z
+      .object({ cardId: uuidSchema })
+      .parse({ cardId: formData.get("cardId") });
+
+    const { boardId } = await watchCard({ cardId }, { source: "ui" });
+
+    revalidatePath(boardPath(boardId));
+    return { ok: true, message: "Watching this card." };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+export async function unwatchCardAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const { cardId } = z
+      .object({ cardId: uuidSchema })
+      .parse({ cardId: formData.get("cardId") });
+
+    const { boardId } = await unwatchCard({ cardId }, { source: "ui" });
+
+    revalidatePath(boardPath(boardId));
+    return { ok: true, message: "No longer watching." };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+/* -------------------------- checklist ordering -------------------------- */
+
+/**
+ * Reorder a checklist item, or move it to another checklist on the same card.
+ *
+ * Neighbour ids only, exactly like `moveCardAction`: the client never sends a
+ * position string, and the index is computed server-side inside the
+ * transaction.
+ */
+export async function moveChecklistItemAction(input: {
+  itemId: string;
+  targetChecklistId?: string | null;
+  afterId?: string | null;
+  beforeId?: string | null;
+}): Promise<ActionState> {
+  try {
+    const parsed = z
+      .object({
+        itemId: uuidSchema,
+        targetChecklistId: uuidSchema.nullable().default(null),
+        afterId: uuidSchema.nullable().default(null),
+        beforeId: uuidSchema.nullable().default(null),
+      })
+      .parse({
+        itemId: input.itemId,
+        targetChecklistId: input.targetChecklistId ?? null,
+        afterId: input.afterId ?? null,
+        beforeId: input.beforeId ?? null,
+      });
+
+    const { boardId } = await moveChecklistItem(
+      {
+        itemId: parsed.itemId,
+        ...(parsed.targetChecklistId
+          ? { targetChecklistId: parsed.targetChecklistId }
+          : {}),
+        afterId: parsed.afterId,
+        beforeId: parsed.beforeId,
+      },
+      { source: "ui" },
+    );
+
     revalidatePath(boardPath(boardId));
     return { ok: true };
   } catch (error) {

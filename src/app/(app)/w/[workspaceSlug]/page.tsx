@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { ArchivedBoards } from "@/components/app/archived-boards";
 import { CreateBoardDialog } from "@/components/app/create-board-dialog";
 import { AuthorizationError } from "@/lib/errors";
-import { getWorkspacePage } from "@/lib/queries";
+import { getWorkspacePage, listArchivedWorkspaceBoards } from "@/lib/queries";
+import { safeRead } from "@/lib/safe-read";
 
 export async function generateMetadata({
   params,
@@ -31,6 +33,14 @@ export default async function WorkspacePage({
   });
 
   const { workspace, role, boards } = page;
+
+  // Decoration: the archive is a recovery affordance, not the point of the
+  // page, so a failure here must not take the board grid down with it.
+  const archived = await safeRead(
+    "workspace.archivedBoards",
+    () => listArchivedWorkspaceBoards(workspace.id),
+    [],
+  );
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 sm:py-10">
@@ -96,6 +106,20 @@ export default async function WorkspacePage({
           </div>
         )}
       </section>
+
+      <ArchivedBoards
+        canRestore={role === "owner" || role === "admin"}
+        boards={archived.map((board) => ({
+          id: board.id,
+          name: board.name,
+          archivedLabel:
+            board.archivedAt?.toLocaleDateString("en-GB", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            }) ?? "",
+        }))}
+      />
     </div>
   );
 }

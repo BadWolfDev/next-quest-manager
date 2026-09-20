@@ -8,6 +8,10 @@ import { requireUser } from "@/lib/authorize";
 
 export type NotificationType =
   | "card.assigned"
+  | "card.commented"
+  | "card.mentioned"
+  | "card.due_soon"
+  | "card.overdue"
   | "workspace.role_changed"
   | "workspace.added"
   | "workspace.removed";

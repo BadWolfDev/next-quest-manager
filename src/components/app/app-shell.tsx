@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { NotificationBell } from "@/components/app/notification-bell";
+import { SearchCommand } from "@/components/app/search-command";
 import { UserMenu, type UserMenuUser } from "@/components/app/user-menu";
 import { WorkspaceSwitcher } from "@/components/app/workspace-switcher";
 import { Wordmark } from "@/components/brand";
@@ -190,6 +191,12 @@ export function AppShell({
           </Link>
           <NotificationBell initialUnread={unreadCount} />
         </div>
+        <div className="px-2 pb-1">
+          {/* The only instance that owns Cmd/Ctrl+K. The sidebar is always
+              mounted (just visually hidden below md), so the shortcut works on
+              every screen size. */}
+          <SearchCommand />
+        </div>
         <div className="min-h-0 flex-1">
           <SidebarBody user={user} workspaces={workspaces} boards={boards} />
         </div>
@@ -226,6 +233,7 @@ export function AppShell({
               Next Quest Manager
             </span>
           </Link>
+          <SearchCommand variant="icon" hotkey={false} />
           <NotificationBell initialUnread={unreadCount} />
         </header>
 

@@ -12,8 +12,35 @@ import {
   type AssignableMember,
 } from "@/components/board/assignee-popover";
 import type { BoardCardState } from "@/components/board/board-state";
+import { CardMenu, type CardEdge } from "@/components/board/card-menu";
+import { DUE_TONE, dueLabel, dueStatus } from "@/components/board/due-status";
 import { LabelChips } from "@/components/board/label-chips";
+import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
+
+/**
+ * The due-date pill.
+ *
+ * "Overdue" and "due soon" depend on the current clock, which the server and
+ * the browser do not share. `useNow()` reports 0 on the server and during
+ * hydration — same DOM shape, same text, neutral tone — and flips to the real
+ * time on the client, so no className has to survive a hydration comparison.
+ */
+function DueBadge({ due }: { due: Date }) {
+  const status = dueStatus(due, useNow());
+
+  return (
+    <span
+      className={cn(
+        "mt-1.5 inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-xs",
+        DUE_TONE[status],
+      )}
+    >
+      <CalendarClock aria-hidden="true" className="size-3.5" />
+      {dueLabel(due, status)}
+    </span>
+  );
+}
 
 /** The card's visual body, shared by the in-list item and the DragOverlay. */
 export function CardBody({
@@ -22,24 +49,48 @@ export function CardBody({
   overlay = false,
   members,
   canWrite = false,
+  boardId,
+  canMoveUp = false,
+  canMoveDown = false,
+  onMoveToEdge,
 }: {
   card: BoardCardState;
   dragging?: boolean;
   overlay?: boolean;
   members?: AssignableMember[];
   canWrite?: boolean;
+  boardId?: string;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  onMoveToEdge?: (cardId: string, edge: CardEdge) => void;
 }) {
+  // Viewers get no quick menu at all — every item on it is a mutation or a
+  // shortcut to one.
+  const showMenu = canWrite && !overlay && boardId && onMoveToEdge;
+
   return (
     <div
       className={cn(
-        "nqm-skin-card bg-card rounded-lg border px-3 py-2.5 text-sm shadow-sm",
+        "nqm-skin-card bg-card group/card rounded-lg border px-3 py-2.5 text-sm shadow-sm",
         overlay && "rotate-2 shadow-lg ring-2 ring-primary/40",
         dragging && "opacity-40",
       )}
     >
       <LabelChips labels={card.labels} className="mb-1.5" />
 
-      {card.title}
+      <span className="flex items-start gap-1.5">
+        <span className="min-w-0 flex-1">{card.title}</span>
+        {showMenu ? (
+          <CardMenu
+            cardId={card.id}
+            cardTitle={card.title}
+            boardId={boardId}
+            canMoveUp={canMoveUp}
+            canMoveDown={canMoveDown}
+            onMoveToEdge={onMoveToEdge}
+          />
+        ) : null}
+      </span>
 
       {card.excerpt ? (
         <span className="text-muted-foreground mt-1 block text-xs leading-snug">
@@ -47,15 +98,7 @@ export function CardBody({
         </span>
       ) : null}
 
-      {card.dueDate ? (
-        <span className="text-muted-foreground mt-1.5 flex items-center gap-1.5 text-xs">
-          <CalendarClock className="size-3.5" />
-          {card.dueDate.toLocaleDateString("en-GB", {
-            day: "numeric",
-            month: "short",
-          })}
-        </span>
-      ) : null}
+      {card.dueDate ? <DueBadge due={card.dueDate} /> : null}
 
       {card.assignees.length > 0 || (canWrite && !overlay) ? (
         <span className="mt-2 flex items-center justify-between gap-2">
@@ -83,6 +126,9 @@ export function SortableCard({
   boardId,
   members,
   canWrite,
+  canMoveUp,
+  canMoveDown,
+  onMoveToEdge,
 }: {
   card: BoardCardState;
   listId: string;
@@ -90,6 +136,9 @@ export function SortableCard({
   boardId: string;
   members: AssignableMember[];
   canWrite: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveToEdge: (cardId: string, edge: CardEdge) => void;
 }) {
   const router = useRouter();
   // Where the pointer went down, so a drag is never mistaken for a click.
@@ -122,8 +171,8 @@ export function SortableCard({
         downAt.current = { x: event.clientX, y: event.clientY };
       }}
       onClick={(event) => {
-        // Controls layered on the card (the assignee popover) handle their own
-        // clicks; don't hijack those.
+        // Controls layered on the card (the assignee popover, the quick menu)
+        // handle their own clicks; don't hijack those.
         if ((event.target as HTMLElement).closest("[data-card-control]")) return;
         const from = downAt.current;
         downAt.current = null;
@@ -149,6 +198,10 @@ export function SortableCard({
         dragging={isDragging}
         members={members}
         canWrite={canWrite}
+        boardId={boardId}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        onMoveToEdge={onMoveToEdge}
       />
     </li>
   );

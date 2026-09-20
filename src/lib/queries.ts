@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
 import type { WorkspaceRole } from "@/db/schema";
@@ -16,6 +16,7 @@ import { toPlainExcerpt } from "@/lib/excerpt";
 import {
   requireBoardAccess,
   requireUser,
+  requireWorkspaceMember,
   requireWorkspaceMemberBySlug,
   READ_MIN_ROLE,
   type Actor,
@@ -98,6 +99,33 @@ export async function listWorkspaceBoards(
     )
     .where(and(...conditions))
     .orderBy(asc(boards.createdAt));
+}
+
+/**
+ * Archived boards in a workspace, newest first.
+ *
+ * Deliberately separate from `listWorkspaceBoards`: the workspace page renders
+ * this through `safeRead`, and it runs `requireWorkspaceMember` itself so the
+ * caller's membership is checked even when it is reached from somewhere that
+ * has not already resolved the workspace context.
+ */
+export async function listArchivedWorkspaceBoards(
+  workspaceId: string,
+  actor?: Actor,
+): Promise<BoardSummary[]> {
+  await requireWorkspaceMember(workspaceId, READ_MIN_ROLE, actor);
+
+  return db
+    .select({
+      id: boards.id,
+      name: boards.name,
+      background: boards.background,
+      archivedAt: boards.archivedAt,
+      updatedAt: boards.updatedAt,
+    })
+    .from(boards)
+    .where(and(eq(boards.workspaceId, workspaceId), isNotNull(boards.archivedAt)))
+    .orderBy(desc(boards.archivedAt));
 }
 
 /** Workspace + its boards, addressed by slug. Throws if not a member. */

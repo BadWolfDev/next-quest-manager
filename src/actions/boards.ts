@@ -1,15 +1,15 @@
 "use server";
 
 import { eq } from "drizzle-orm";
-import { generateNKeysBetween } from "fractional-indexing";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/db";
-import { boards, labels, lists } from "@/db/schema";
+import { boards } from "@/db/schema";
 import { toActionError, type ActionState } from "@/lib/action-result";
 import { recordActivity } from "@/lib/activity";
-import { requireBoardAccess, requireWorkspaceMember } from "@/lib/authorize";
+import { requireBoardAccess } from "@/lib/authorize";
+import { archiveBoard, createBoard, restoreBoard } from "@/lib/core/board-ops";
 import { boardNameSchema, hexColorSchema, uuidSchema } from "@/lib/validation";
 
 const createBoardSchema = z.object({
@@ -25,21 +25,11 @@ const renameBoardSchema = z.object({
 
 const boardIdSchema = z.object({ boardId: uuidSchema });
 
-const DEFAULT_LISTS = ["Backlog", "In Progress", "Done"];
-
-const DEFAULT_LABELS = [
-  { name: "Bug", color: "#ef4444" },
-  { name: "Feature", color: "#22c55e" },
-  { name: "Chore", color: "#64748b" },
-];
-
 /** Create a board, seeded with three lists and a starter label set. */
 export async function createBoardAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  let slug: string | null = null;
-
   try {
     const input = createBoardSchema.parse({
       workspaceId: formData.get("workspaceId"),
@@ -47,46 +37,9 @@ export async function createBoardAction(
       background: formData.get("background"),
     });
 
-    const ctx = await requireWorkspaceMember(input.workspaceId, "member");
-    slug = ctx.workspace.slug;
+    const { workspaceSlug } = await createBoard(input, { source: "ui" });
 
-    await db.transaction(async (tx) => {
-      const [board] = await tx
-        .insert(boards)
-        .values({
-          workspaceId: input.workspaceId,
-          name: input.name,
-          background: { type: "color", value: input.background },
-          createdBy: ctx.user.id,
-        })
-        .returning({ id: boards.id });
-
-      // Fractional indices: evenly spaced keys that later drag & drop can
-      // insert between without renumbering neighbours.
-      const positions = generateNKeysBetween(null, null, DEFAULT_LISTS.length);
-
-      await tx.insert(lists).values(
-        DEFAULT_LISTS.map((name, i) => ({
-          boardId: board.id,
-          name,
-          position: positions[i],
-        })),
-      );
-
-      await tx
-        .insert(labels)
-        .values(DEFAULT_LABELS.map((l) => ({ ...l, boardId: board.id })));
-
-      await recordActivity(tx, {
-        workspaceId: input.workspaceId,
-        boardId: board.id,
-        actorId: ctx.user.id,
-        type: "board.created",
-        data: { name: input.name },
-      });
-    });
-
-    revalidatePath(`/w/${slug}`);
+    revalidatePath(`/w/${workspaceSlug}`);
     revalidatePath("/app", "layout");
     return { ok: true, message: `Created “${input.name}”.` };
   } catch (error) {
@@ -130,7 +83,7 @@ export async function renameBoardAction(
   }
 }
 
-/** Archive a board (soft delete). Requires admin. */
+/** Archive a board (soft delete). Requires admin — enforced by the core op. */
 export async function archiveBoardAction(
   _prev: ActionState,
   formData: FormData,
@@ -140,32 +93,20 @@ export async function archiveBoardAction(
       boardId: formData.get("boardId"),
     });
 
-    const ctx = await requireBoardAccess(boardId, "admin");
+    const { name, workspaceSlug } = await archiveBoard(
+      { boardId },
+      { source: "ui" },
+    );
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(boards)
-        .set({ archivedAt: new Date(), updatedAt: new Date() })
-        .where(eq(boards.id, boardId));
-
-      await recordActivity(tx, {
-        workspaceId: ctx.workspace.id,
-        boardId,
-        actorId: ctx.user.id,
-        type: "board.archived",
-        data: { name: ctx.board.name },
-      });
-    });
-
-    revalidatePath(`/w/${ctx.workspace.slug}`);
+    revalidatePath(`/w/${workspaceSlug}`);
     revalidatePath("/app", "layout");
-    return { ok: true, message: `Archived “${ctx.board.name}”.` };
+    return { ok: true, message: `Archived “${name}”.` };
   } catch (error) {
     return toActionError(error);
   }
 }
 
-/** Restore an archived board. Requires admin. */
+/** Restore an archived board. Requires admin — enforced by the core op. */
 export async function restoreBoardAction(
   _prev: ActionState,
   formData: FormData,
@@ -175,26 +116,14 @@ export async function restoreBoardAction(
       boardId: formData.get("boardId"),
     });
 
-    const ctx = await requireBoardAccess(boardId, "admin");
+    const { name, workspaceSlug } = await restoreBoard(
+      { boardId },
+      { source: "ui" },
+    );
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(boards)
-        .set({ archivedAt: null, updatedAt: new Date() })
-        .where(eq(boards.id, boardId));
-
-      await recordActivity(tx, {
-        workspaceId: ctx.workspace.id,
-        boardId,
-        actorId: ctx.user.id,
-        type: "board.restored",
-        data: { name: ctx.board.name },
-      });
-    });
-
-    revalidatePath(`/w/${ctx.workspace.slug}`);
+    revalidatePath(`/w/${workspaceSlug}`);
     revalidatePath("/app", "layout");
-    return { ok: true, message: `Restored “${ctx.board.name}”.` };
+    return { ok: true, message: `Restored “${name}”.` };
   } catch (error) {
     return toActionError(error);
   }

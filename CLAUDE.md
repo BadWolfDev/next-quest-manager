@@ -234,6 +234,24 @@ Rules that matter:
 
 **Soft deletes.** `archived_at` rather than `DELETE`, so history survives.
 Queries must filter `isNull(archivedAt)` unless they deliberately want archives.
+`restoreCard` pulls a card into the board's first live list when the list it
+came from was archived meanwhile — restoring something into an invisible list
+is indistinguishable from the restore having failed.
+
+**Watching is interest; assignment is responsibility.** `card_watchers` is a
+separate table from `card_assignees` on purpose, because the two diverge.
+Assigning and commenting auto-watch, unassigning does not unwatch.
+`comments.edited_at` is nullable and separate from the non-null `updated_at`:
+only a null/not-null column can distinguish "never edited" from "edited
+immediately". Comment edits and deletes are author-only, with workspace
+admins and owners allowed as moderators.
+
+**Notifications are written inside the causing transaction** and every
+recipient is a workspace member resolved in SQL — a comment mention cannot
+reach a stranger, and a cron reminder cannot reach somebody who has since been
+removed from the workspace. `@mention` matching lives in `lib/mentions.ts` and
+tests the *known member set* against the body rather than inventing a mention
+grammar with a regex.
 
 **Denormalised `cards.board_id`.** Cards carry their board id alongside their
 list id so board-scoped queries and authorization checks avoid a join through
@@ -267,11 +285,14 @@ shared constants live in `src/lib/palette.ts`.
 
 ```
 src/
-  actions/        auth.ts, boards.ts, workspaces.ts, session.ts
+  actions/        auth.ts, boards.ts, workspaces.ts, session.ts,
+                  account.ts (own profile + password), comments.ts, labels.ts,
+                  archive.ts (restore card / list)
   app/
     (auth)/       /login, /signup — centred card layout
     (app)/        authenticated shell: /app, /w/[workspaceSlug], /b/[boardId]
     api/auth/     Auth.js route handler (Node runtime)
+    api/cron/     due-reminders — CRON_SECRET-authenticated due-date sweep
     page.tsx      signed-out landing page
   components/
     ui/           shadcn/ui primitives — regenerate, don't hand-edit
@@ -287,16 +308,21 @@ src/
   db/             schema.ts (single source of truth), index.ts (client singleton)
   hooks/          use-mounted (hydration gate)
   lib/            authorize, queries, rate-limit, password, positions, env,
-                  validation, errors, api-tokens, invites, notifications
+                  validation, errors, api-tokens, invites, notifications,
+                  mentions.ts (pure @mention resolution, no DB)
     core/         board-ops.ts, members.ts — the single implementation of every
                   board mutation and read, shared by server actions and MCP
                   public-board.ts — the isolated, session-free public read path
+                  due-reminders.ts — the cron sweep; a system job with no
+                  session, so it scopes recipients through workspace_members
+                  in SQL instead of calling an authorize() helper
   skin.ts         skin list, storage keys, the no-flash inline script
   mcp/            server.ts — MCP tool definitions
   auth.ts         Auth.js, Node runtime (providers + DB)
   auth.config.ts  Auth.js, edge-safe half (no providers, no DB)
   proxy.ts        route protection (Next 16's renamed middleware)
 drizzle/          generated SQL migrations, committed
+vercel.json       Vercel Cron schedule for the due-date sweep
 scripts/          migrate.ts
 ```
 
@@ -307,6 +333,7 @@ npm run dev          # dev server
 npm run build        # production build; typechecks and lints
 npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
+npm test             # Vitest (src/**/*.test.ts); set TEST_DATABASE_URL to include the Postgres authorization tests
 npm run db:generate  # schema change -> new SQL migration in ./drizzle
 npm run db:migrate   # apply pending migrations
 npm run db:studio    # browse the data

@@ -6,6 +6,7 @@ import {
   LogOut,
   Palette,
   ShieldCheck,
+  UserRound,
   Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -81,6 +82,13 @@ export function UserMenu({ user }: { user: UserMenuUser }) {
         </DropdownMenuLabel>
 
         <DropdownMenuSeparator />
+
+        <DropdownMenuItem asChild>
+          <Link href="/settings/account" className="cursor-pointer">
+            <UserRound className="size-4" />
+            Account
+          </Link>
+        </DropdownMenuItem>
 
         <DropdownMenuItem
           onSelect={(event) => {

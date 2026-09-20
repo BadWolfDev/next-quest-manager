@@ -27,17 +27,26 @@ import { moveCardAction, moveListAction } from "@/actions/move";
 import { ActivityPanel } from "@/components/board/activity-panel";
 import { AddList } from "@/components/board/add-list";
 import type { AssignableMember } from "@/components/board/assignee-popover";
+import { BoardFilterBar } from "@/components/board/board-filter-bar";
+import {
+  EMPTY_FILTER,
+  filterBoard,
+  type BoardFilter,
+} from "@/components/board/board-filter";
 import { useBoardFreshness } from "@/components/board/use-board-freshness";
 import {
   applyMove,
   locateCard,
   neighboursOfCard,
   neighboursOfList,
+  type BoardCardLabel,
   type BoardListState,
   type BoardMove,
 } from "@/components/board/board-state";
+import type { CardEdge } from "@/components/board/card-menu";
 import { CardBody } from "@/components/board/sortable-card";
 import { ListPreview, SortableList } from "@/components/board/sortable-list";
+import { useNow } from "@/hooks/use-now";
 import type { ActionState } from "@/lib/action-result";
 
 const DROP_ANIMATION: DropAnimation = {
@@ -61,11 +70,14 @@ export function BoardView({
   boardId,
   lists,
   members,
+  labels,
   canWrite,
 }: {
   boardId: string;
   lists: BoardListState[];
   members: AssignableMember[];
+  /** Every label defined on this board — the filter bar's vocabulary. */
+  labels: BoardCardLabel[];
   /** False for viewers: no drag, no composers, no assignee controls. */
   canWrite: boolean;
 }) {
@@ -84,6 +96,21 @@ export function BoardView({
   const [activeType, setActiveType] = useState<"card" | "list" | null>(null);
 
   const board = dragLists ?? optimisticLists;
+
+  /*
+    Filtering is a render-time narrowing and nothing more. `board` stays the
+    full arrangement, so `applyMove`, `locateCard` and the neighbour helpers all
+    keep seeing every card — which is what makes a drag on a filtered board
+    compute the same fractional index it would on an unfiltered one.
+  */
+  const [filter, setFilter] = useState<BoardFilter>(EMPTY_FILTER);
+  // `useNow()` is 0 on the server and during hydration, so the time-dependent
+  // due filters match nothing until the real clock arrives — never a mismatch.
+  const now = useNow();
+  const view = useMemo(
+    () => filterBoard(board, filter, now),
+    [board, filter, now],
+  );
 
   // Reconcile with other people's edits. Paused while a drag is in flight or
   // while a composer/input on the board has focus, so a poll never yanks the
@@ -135,6 +162,52 @@ export function BoardView({
         ? (board.find((l) => l.id === activeId) ?? null)
         : null,
     [activeType, activeId, board],
+  );
+
+  /**
+   * "Move to top" / "Move to bottom" from a card's quick menu. It takes exactly
+   * the same route as a drag: apply the pure reducer, read the neighbour ids
+   * out of the *resulting* arrangement, and let the server compute the
+   * position. The same per-board queue keeps it ordered against drags.
+   */
+  const moveCardToEdge = useCallback(
+    (cardId: string, edge: CardEdge) => {
+      const from = locateCard(optimisticLists, cardId);
+      if (!from) return;
+
+      const list = optimisticLists[from.listIndex];
+      const toIndex = edge === "top" ? 0 : list.cards.length - 1;
+      if (toIndex === from.cardIndex) return;
+
+      const move: BoardMove = {
+        kind: "card",
+        cardId,
+        toListId: list.id,
+        toIndex,
+      };
+      const next = applyMove(optimisticLists, move);
+      const { afterCardId, beforeCardId } = neighboursOfCard(
+        next,
+        list.id,
+        cardId,
+      );
+
+      startTransition(async () => {
+        applyOptimistic(move);
+        const result = await enqueue(() =>
+          moveCardAction({
+            cardId,
+            targetListId: list.id,
+            afterCardId,
+            beforeCardId,
+          }),
+        );
+        if (!result.ok) {
+          toast.error(result.message ?? "Could not move that card.");
+        }
+      });
+    },
+    [applyOptimistic, enqueue, optimisticLists, startTransition],
   );
 
   function handleDragStart(event: DragStartEvent) {
@@ -313,7 +386,14 @@ export function BoardView({
         }
       }}
     >
-      <div className="mb-3 flex shrink-0 justify-end">
+      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <BoardFilterBar
+          labels={labels}
+          members={members}
+          filter={filter}
+          onChange={setFilter}
+          hidden={view.hidden}
+        />
         <ActivityPanel boardId={boardId} />
       </div>
     <DndContext
@@ -349,16 +429,23 @@ export function BoardView({
         {/* One list per viewport with snap points on phones; free horizontal
             scroll from `sm` up. */}
         <ol className="flex h-full snap-x snap-mandatory items-start gap-4 overflow-x-auto pb-2 sm:snap-none">
-          {board.map((list, index) => (
-            <SortableList
-              key={list.id}
-              list={list}
-              index={index}
-              boardId={boardId}
-              members={members}
-              canWrite={canWrite}
-            />
-          ))}
+          {view.lists.map((list, index) => {
+            const full = board[index];
+            return (
+              <SortableList
+                key={list.id}
+                list={list}
+                index={index}
+                boardId={boardId}
+                members={members}
+                canWrite={canWrite}
+                totalCards={full.cards.length}
+                firstCardId={full.cards[0]?.id ?? null}
+                lastCardId={full.cards[full.cards.length - 1]?.id ?? null}
+                onMoveToEdge={moveCardToEdge}
+              />
+            );
+          })}
           {canWrite ? (
             <li className="shrink-0 snap-center sm:snap-align-none">
               <AddList boardId={boardId} />
