@@ -13,6 +13,7 @@ import type { AssignableMember } from "@/components/board/assignee-popover";
 import { listAccent } from "@/components/board/list-accent";
 import type { BoardListState } from "@/components/board/board-state";
 import { ListHeader } from "@/components/board/list-header";
+import type { CardEdge } from "@/components/board/card-menu";
 import { CardBody, SortableCard } from "@/components/board/sortable-card";
 import { cn } from "@/lib/utils";
 
@@ -70,13 +71,27 @@ export function SortableList({
   boardId,
   members,
   canWrite,
+  totalCards,
+  firstCardId,
+  lastCardId,
+  onMoveToEdge,
 }: {
+  /** The cards to *render* — already narrowed by the board's filter bar. */
   list: BoardListState;
   /** Position on the board; drives the retro skin's top-rule colour. */
   index: number;
   boardId: string;
   members: AssignableMember[];
   canWrite: boolean;
+  /**
+   * Cards in the list before filtering, plus the ids at either end of it. The
+   * header counts the real list, and "move to top/bottom" has to be judged
+   * against the full arrangement — not against what happens to be visible.
+   */
+  totalCards: number;
+  firstCardId: string | null;
+  lastCardId: string | null;
+  onMoveToEdge: (cardId: string, edge: CardEdge) => void;
 }) {
   const {
     attributes,
@@ -107,7 +122,7 @@ export function SortableList({
         <ListHeader
           listId={list.id}
           name={list.name}
-          cardCount={list.cards.length}
+          cardCount={totalCards}
           canWrite={canWrite}
           dragHandleProps={canWrite ? { ...attributes, ...listeners } : undefined}
         />
@@ -129,6 +144,9 @@ export function SortableList({
                 boardId={boardId}
                 members={members}
                 canWrite={canWrite}
+                canMoveUp={card.id !== firstCardId}
+                canMoveDown={card.id !== lastCardId}
+                onMoveToEdge={onMoveToEdge}
               />
             ))}
           </ul>
@@ -136,7 +154,7 @@ export function SortableList({
 
         {list.cards.length === 0 ? (
           <p className="text-muted-foreground px-1.5 pt-2 text-xs">
-            Nothing here yet.
+            {totalCards === 0 ? "Nothing here yet." : "No cards match the filter."}
           </p>
         ) : null}
 

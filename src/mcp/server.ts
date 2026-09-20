@@ -6,19 +6,40 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import {
+  addChecklistItem,
   addComment,
+  archiveBoard,
   archiveCard,
+  archiveList,
   assignCard,
-  unassignCard,
+  copyCard,
   createBoard,
   createCard,
+  createChecklist,
+  createLabel,
   createList,
+  deleteChecklistItem,
+  deleteComment,
+  deleteLabel,
   getBoardStructure,
-  getCardDetail,
+  getCardModalData,
+  listLabels,
   moveCard,
+  moveCardToBoard,
+  renameList,
   resolvePlacement,
+  restoreBoard,
+  restoreCard,
+  restoreList,
   searchCards,
+  setCardLabel,
+  toggleChecklistItem,
+  unassignCard,
+  unwatchCard,
   updateCard,
+  updateComment,
+  updateLabel,
+  watchCard,
 } from "@/lib/core/board-ops";
 import { listAssignableMembersFor } from "@/lib/core/members";
 import type { Actor } from "@/lib/authorize";
@@ -46,7 +67,13 @@ its cards in display order, which is usually enough context to act.
 
 Ids are UUIDs and are stable — pass them back verbatim. When placing a card use
 \`move_card\` with position "top" or "bottom", or {"after_card_id": "<uuid>"} to
-put it directly below a specific card.
+put it directly below a specific card. \`move_card_to_board\` is the one for a
+different board; \`copy_card\` duplicates instead of moving.
+
+\`get_card\` is the source of checklist ids and of a card's labels; \`list_labels\`
+gives the ids \`set_card_label\` needs. Archiving is reversible everywhere —
+\`archive_list\`/\`restore_list\`, \`archive_card\`/\`restore_card\`,
+\`archive_board\`/\`restore_board\`.
 
 You only ever see workspaces the token's owner is a member of. Read-only tokens
 can call the list/get/search tools but every mutating tool will refuse.`;
@@ -272,12 +299,13 @@ export function registerTools(server: McpServer) {
     {
       title: "Get card",
       description:
-        "Get one card in full: description, due date, which list it is in, and its comments.",
+        "Get one card in full: description, due date, which list it is in, its labels, checklists, assignees, watchers and comments.",
       inputSchema: z.object({ card_id: uuid }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     reading(async ({ card_id }, { actor }) => {
-      const detail = await getCardDetail(card_id, actor);
+      const detail = await getCardModalData(card_id, actor);
+      const attached = new Set(detail.attachedLabelIds);
       return {
         id: detail.card.id,
         title: detail.card.title,
@@ -290,11 +318,29 @@ export function registerTools(server: McpServer) {
           user_id: a.userId,
           name: a.name,
         })),
+        watchers: detail.watchers.map((w) => ({
+          user_id: w.userId,
+          name: w.name,
+        })),
+        watching: detail.watching,
+        labels: detail.boardLabels
+          .filter((l) => attached.has(l.id))
+          .map((l) => ({ id: l.id, name: l.name, color: l.color })),
+        checklists: detail.checklists.map((c) => ({
+          id: c.id,
+          title: c.title,
+          items: c.items.map((i) => ({
+            id: i.id,
+            content: i.content,
+            completed: i.completed,
+          })),
+        })),
         comments: detail.comments.map((c) => ({
           id: c.id,
           author: c.authorName ?? "(deleted user)",
           body: c.body,
           created_at: c.createdAt.toISOString(),
+          edited_at: c.editedAt?.toISOString(),
         })),
       };
     }),
@@ -577,6 +623,421 @@ export function registerTools(server: McpServer) {
       const opts = { actor, source: "mcp" as const };
       await unassignCard({ cardId: card_id, userId: user_id }, opts);
       return { card_id, user_id, unassigned: true };
+    }),
+  );
+
+  /* ----------------------------- lists ------------------------------- */
+
+  server.registerTool(
+    "rename_list",
+    {
+      title: "Rename list",
+      description: "Change a list's name.",
+      inputSchema: z.object({
+        list_id: uuid,
+        name: z.string().trim().min(1).max(80),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ list_id, name }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await renameList({ listId: list_id, name }, opts);
+      return { list_id, name };
+    }),
+  );
+
+  server.registerTool(
+    "archive_list",
+    {
+      title: "Archive list",
+      description:
+        "Archive a list. It disappears from the board along with its cards, but nothing is deleted and restore_list brings it back.",
+      inputSchema: z.object({ list_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    mutating(async ({ list_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await archiveList({ listId: list_id }, opts);
+      return { list_id, archived: true };
+    }),
+  );
+
+  server.registerTool(
+    "restore_list",
+    {
+      title: "Restore list",
+      description:
+        "Un-archive a list. It returns to the position it had before it was archived.",
+      inputSchema: z.object({ list_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ list_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await restoreList({ listId: list_id }, opts);
+      return { list_id, archived: false };
+    }),
+  );
+
+  /* ----------------------------- cards ------------------------------- */
+
+  server.registerTool(
+    "restore_card",
+    {
+      title: "Restore card",
+      description:
+        "Un-archive a card. If the list it came from has since been archived the card lands in the board's first list instead.",
+      inputSchema: z.object({ card_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ card_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { listId } = await restoreCard({ cardId: card_id }, opts);
+      return { card_id, archived: false, list_id: listId };
+    }),
+  );
+
+  server.registerTool(
+    "copy_card",
+    {
+      title: "Copy card",
+      description:
+        "Duplicate a card into a list, which may be on another board. Copies the title, description, due date and checklists, plus labels when the destination is the same board. Comments and assignees are not copied.",
+      inputSchema: z.object({
+        card_id: uuid,
+        target_list_id: uuid,
+        title: z
+          .string()
+          .trim()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("Title for the copy. Defaults to the original's title."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    mutating(async ({ card_id, target_list_id, title }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const result = await copyCard(
+        {
+          cardId: card_id,
+          targetListId: target_list_id,
+          ...(title !== undefined ? { title } : {}),
+        },
+        opts,
+      );
+      return { card_id: result.cardId, board_id: result.boardId };
+    }),
+  );
+
+  server.registerTool(
+    "move_card_to_board",
+    {
+      title: "Move card to another board",
+      description:
+        "Move a card to a list on a different board. Labels that do not exist on the destination board are dropped, as are assignees and watchers who are not members of its workspace. The card lands at the bottom of the destination list.",
+      inputSchema: z.object({ card_id: uuid, target_list_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    mutating(async ({ card_id, target_list_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const result = await moveCardToBoard(
+        { cardId: card_id, targetListId: target_list_id },
+        opts,
+      );
+      return {
+        card_id,
+        from_board_id: result.fromBoardId,
+        board_id: result.boardId,
+        list_id: result.listId,
+      };
+    }),
+  );
+
+  server.registerTool(
+    "watch_card",
+    {
+      title: "Watch card",
+      description:
+        "Follow a card as the token's owner, so they are notified about comments on it and when it falls due.",
+      inputSchema: z.object({ card_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ card_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await watchCard({ cardId: card_id }, opts);
+      return { card_id, watching: true };
+    }),
+  );
+
+  server.registerTool(
+    "unwatch_card",
+    {
+      title: "Unwatch card",
+      description: "Stop following a card.",
+      inputSchema: z.object({ card_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ card_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await unwatchCard({ cardId: card_id }, opts);
+      return { card_id, watching: false };
+    }),
+  );
+
+  /* ----------------------------- boards ------------------------------ */
+
+  server.registerTool(
+    "archive_board",
+    {
+      title: "Archive board",
+      description:
+        "Archive a whole board. Requires the admin role in its workspace. Nothing is deleted and restore_board brings it back.",
+      inputSchema: z.object({ board_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    mutating(async ({ board_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { name } = await archiveBoard({ boardId: board_id }, opts);
+      return { board_id, name, archived: true };
+    }),
+  );
+
+  server.registerTool(
+    "restore_board",
+    {
+      title: "Restore board",
+      description:
+        "Un-archive a board. Requires the admin role in its workspace.",
+      inputSchema: z.object({ board_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ board_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { name } = await restoreBoard({ boardId: board_id }, opts);
+      return { board_id, name, archived: false };
+    }),
+  );
+
+  /* ----------------------------- labels ------------------------------ */
+
+  server.registerTool(
+    "list_labels",
+    {
+      title: "List labels",
+      description:
+        "List the labels defined on a board, with their ids and colours. Use this before set_card_label.",
+      inputSchema: z.object({ board_id: uuid }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    reading(async ({ board_id }, { actor }) => {
+      const rows = await listLabels(board_id, actor);
+      return rows.map((l) => ({ id: l.id, name: l.name, color: l.color }));
+    }),
+  );
+
+  server.registerTool(
+    "create_label",
+    {
+      title: "Create label",
+      description:
+        "Add a label to a board. Labels belong to a board and can only be attached to cards on it.",
+      inputSchema: z.object({
+        board_id: uuid,
+        name: z.string().trim().min(1).max(40),
+        color: z
+          .string()
+          .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
+          .describe("Hex colour, e.g. #22c55e."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    mutating(async ({ board_id, name, color }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { labelId } = await createLabel(
+        { boardId: board_id, name, color },
+        opts,
+      );
+      return { label_id: labelId, name, color };
+    }),
+  );
+
+  server.registerTool(
+    "update_label",
+    {
+      title: "Update label",
+      description:
+        "Rename or recolour a board label. Omit a field to leave it unchanged.",
+      inputSchema: z.object({
+        label_id: uuid,
+        name: z.string().trim().min(1).max(40).optional(),
+        color: z
+          .string()
+          .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
+          .optional(),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ label_id, name, color }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await updateLabel(
+        {
+          labelId: label_id,
+          ...(name !== undefined ? { name } : {}),
+          ...(color !== undefined ? { color } : {}),
+        },
+        opts,
+      );
+      return { label_id, updated: true };
+    }),
+  );
+
+  server.registerTool(
+    "delete_label",
+    {
+      title: "Delete label",
+      description:
+        "Delete a board label. It is removed from every card that carried it. This cannot be undone.",
+      inputSchema: z.object({ label_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    mutating(async ({ label_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { detached } = await deleteLabel({ labelId: label_id }, opts);
+      return { label_id, deleted: true, detached_from_cards: detached };
+    }),
+  );
+
+  server.registerTool(
+    "set_card_label",
+    {
+      title: "Add or remove a card label",
+      description:
+        "Attach a board label to a card, or detach it. The label must belong to the card's own board — get ids from list_labels.",
+      inputSchema: z.object({
+        card_id: uuid,
+        label_id: uuid,
+        attached: z
+          .boolean()
+          .describe("true to add the label, false to remove it."),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ card_id, label_id, attached }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await setCardLabel({ cardId: card_id, labelId: label_id, attached }, opts);
+      return { card_id, label_id, attached };
+    }),
+  );
+
+  /* --------------------------- checklists ---------------------------- */
+
+  server.registerTool(
+    "add_checklist",
+    {
+      title: "Add checklist",
+      description: "Add a checklist to a card.",
+      inputSchema: z.object({
+        card_id: uuid,
+        title: z.string().trim().min(1).max(80),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    mutating(async ({ card_id, title }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { checklistId } = await createChecklist(
+        { cardId: card_id, title },
+        opts,
+      );
+      return { checklist_id: checklistId, title };
+    }),
+  );
+
+  server.registerTool(
+    "add_checklist_item",
+    {
+      title: "Add checklist item",
+      description:
+        "Append an item to the bottom of a checklist. Get checklist ids from get_card.",
+      inputSchema: z.object({
+        checklist_id: uuid,
+        content: z.string().trim().min(1).max(500),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    },
+    mutating(async ({ checklist_id, content }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { itemId } = await addChecklistItem(
+        { checklistId: checklist_id, content },
+        opts,
+      );
+      return { item_id: itemId, content };
+    }),
+  );
+
+  server.registerTool(
+    "toggle_checklist_item",
+    {
+      title: "Tick or untick a checklist item",
+      description: "Mark a checklist item complete or incomplete.",
+      inputSchema: z.object({ item_id: uuid, completed: z.boolean() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ item_id, completed }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await toggleChecklistItem({ itemId: item_id, completed }, opts);
+      return { item_id, completed };
+    }),
+  );
+
+  server.registerTool(
+    "delete_checklist_item",
+    {
+      title: "Delete checklist item",
+      description: "Remove a checklist item. This cannot be undone.",
+      inputSchema: z.object({ item_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    mutating(async ({ item_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await deleteChecklistItem({ itemId: item_id }, opts);
+      return { item_id, deleted: true };
+    }),
+  );
+
+  /* ---------------------------- comments ----------------------------- */
+
+  server.registerTool(
+    "update_comment",
+    {
+      title: "Edit comment",
+      description:
+        "Rewrite a comment's body. Only the comment's author, or a workspace admin or owner, may do this.",
+      inputSchema: z.object({
+        comment_id: uuid,
+        body: z.string().trim().min(1).max(20_000),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ comment_id, body }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await updateComment({ commentId: comment_id, body }, opts);
+      return { comment_id, updated: true };
+    }),
+  );
+
+  server.registerTool(
+    "delete_comment",
+    {
+      title: "Delete comment",
+      description:
+        "Delete a comment. Only its author, or a workspace admin or owner, may do this. This cannot be undone.",
+      inputSchema: z.object({ comment_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    mutating(async ({ comment_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await deleteComment({ commentId: comment_id }, opts);
+      return { comment_id, deleted: true };
     }),
   );
 }

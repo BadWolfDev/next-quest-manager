@@ -36,6 +36,13 @@
       "when": 1788186932093,
       "tag": "0004_user_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789904971504,
+      "tag": "0005_watchers_and_reminders",
+      "breakpoints": true
     }
   ]
 }

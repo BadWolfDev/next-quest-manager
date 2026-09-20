@@ -19,12 +19,34 @@ Redis, no queue, no object store, no third-party auth provider.
   keyboard support
 - **Optimistic UI** — drops apply instantly and roll back with a toast if the
   server refuses
+- **Search across every workspace** — a command palette on `Cmd`/`Ctrl` + `K`,
+  debounced, jumping straight to a card; it only ever returns cards you are
+  already a member of
+- **Filter a board** — by label, assignee, due state (overdue / due in 24 hours
+  / no date) and a text quick-filter, with a live "n cards hidden" count. Purely
+  a way of looking at the board: drag & drop keeps working while a filter is on
+- **Quick actions on a card tile** — open, copy link, move to top or bottom, or
+  archive, from a "…" menu that stays out of the way of the drag handle
+- **Due dates that say something** — overdue and due-within-24-hours tiles carry
+  their own tone, drawn from theme tokens so every skin inherits it
 - **Optional invite-only mode** — closed registration with an env-configured
   admin who mints account invites
 - **Shared workspaces** — invite links (no SMTP required), four roles
   (owner / admin / member / viewer), member management, per-card assignees
 - **Live-ish collaboration** — board freshness polling, an activity panel, and
   in-app notifications
+- **Comments with `@mentions`** — edit and delete your own, watch a card to
+  follow it, and get notified when a card you watch is commented on
+- **Due-date reminders** — an authenticated cron endpoint notifies assignees and
+  watchers 24 hours before a deadline, and once it has passed
+- **Archive and restore** — lists, cards and whole boards soft-delete and come
+  back; nothing is ever silently destroyed. An archive drawer on each board
+  restores lists and cards, and archived boards are restorable from the
+  workspace page
+- **Copy a card, or move it to another board** — checklists come with it, labels
+  that do not exist on the destination do not
+- **Account settings** — `/settings/account`: change your display name or
+  password, the latter verified with argon2 and rate-limited like sign-in
 - **MCP server** — Claude Code, claude.ai connectors, Cursor and any other MCP
   client can read and manage your boards, authenticated with personal access
   tokens (read-only supported)
@@ -34,6 +56,8 @@ Redis, no queue, no object store, no third-party auth provider.
   overlay
 - **Card detail** at a shareable URL — labels, description, checklists,
   assignees, move between lists
+- **Board menu** — rename a board, archive it (admin and up), or open its
+  archive, from the board title
 - **Public board sharing** — a read-only link anyone can open, no account needed
 - Responsive from phone to desktop
 - **Self-host anywhere** — Vercel free tier, Docker, or any Node host
@@ -193,18 +217,52 @@ For **Cursor, Windsurf and most other clients**:
 }
 ```
 
-**Tools:** `list_workspaces`, `list_boards`, `get_board`, `get_card`,
-`search_cards`, `list_members`, `create_board`, `create_list`, `create_card`,
-`update_card`, `move_card`, `archive_card`, `assign_card`, `unassign_card`,
-`add_comment`.
+**Tools**
 
-Read-only tools carry `readOnlyHint` and `archive_card` carries
+| Area | Tools |
+| ---- | ----- |
+| Read | `list_workspaces`, `list_boards`, `get_board`, `get_card`, `search_cards`, `list_members`, `list_labels` |
+| Boards | `create_board`, `archive_board`, `restore_board` |
+| Lists | `create_list`, `rename_list`, `archive_list`, `restore_list` |
+| Cards | `create_card`, `update_card`, `move_card`, `move_card_to_board`, `copy_card`, `archive_card`, `restore_card`, `assign_card`, `unassign_card`, `watch_card`, `unwatch_card` |
+| Labels | `create_label`, `update_label`, `delete_label`, `set_card_label` |
+| Checklists | `add_checklist`, `add_checklist_item`, `toggle_checklist_item`, `delete_checklist_item` |
+| Comments | `add_comment`, `update_comment`, `delete_comment` |
+
+Read-only tools carry `readOnlyHint` and the archiving and deleting ones carry
 `destructiveHint`, so clients know what is safe to auto-approve. Every agent
 change is written to the activity log tagged `source: "mcp"` and shown with a
 "via MCP" marker in the board's activity panel.
 
 **Limits:** 300 requests per minute per token. Authentication is personal access
 tokens only — OAuth 2.1 is on the roadmap.
+
+---
+
+## Due-date reminders
+
+Optional, and off unless you configure it.
+
+`GET /api/cron/due-reminders` finds every non-archived card that falls due
+within 24 hours (or is already overdue) and has not been announced yet, and
+notifies its assignees and watchers. `cards.due_reminded_at` makes it
+idempotent — a card is announced once, and moving its due date re-arms it.
+
+Set `CRON_SECRET` and call it with a bearer token:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" \
+  https://<your-host>/api/cron/due-reminders
+```
+
+On Vercel the bundled `vercel.json` schedules it daily at 08:00 UTC and Vercel
+supplies the header itself. Self-hosting, point any scheduler at it — a systemd
+timer, a Kubernetes CronJob, or `cron` with the `curl` above. Nothing about the
+feature depends on Vercel.
+
+With `CRON_SECRET` unset the route returns **503** and logs why, rather than
+running unauthenticated: an open endpoint that writes notification rows is a
+spam amplifier.
 
 ---
 
@@ -291,6 +349,7 @@ and assignee first names. No account required.
 | `DATABASE_POOL_MAX` | no | Connections per process (default 10). Lower to 1–3 on serverless. |
 | `ADMIN_EMAIL` | no | With `ADMIN_PASSWORD`, runs the instance invite-only. See [Closed registration](#closed-registration-invite-only-instances). |
 | `ADMIN_PASSWORD` | no | Bootstrap password for that account. At least 10 characters. Never re-applied after creation. |
+| `CRON_SECRET` | no | Shared secret for `/api/cron/due-reminders`. Unset, the endpoint refuses to run (503) and due-date reminders are simply off. See [Due-date reminders](#due-date-reminders). |
 | `NQM_ALLOW_REMOTE_MIGRATE` | no | Set to `1` to allow `db:migrate` against a non-local host. A safety catch, not a feature. |
 
 Both required variables are validated at startup with an actionable error.
@@ -305,9 +364,40 @@ Both required variables are validated at startup with an actionable error.
 | `npm run start:migrate` | Migrate, then serve — for self-hosted containers |
 | `npm run start` | Serve the production build |
 | `npm run lint` / `npm run typecheck` | ESLint / `tsc --noEmit` |
+| `npm test` / `npm run test:watch` | Vitest, once / in watch mode |
 | `npm run db:generate` | Diff the schema into a new SQL migration |
 | `npm run db:migrate` | Apply pending migrations |
 | `npm run db:studio` | Browse the data |
+
+## Testing
+
+```bash
+npm test          # run once
+npm run test:watch
+```
+
+Tests are [Vitest](https://vitest.dev) files living next to the code they cover,
+as `src/**/*.test.ts`. Most of them are unit tests over the pure modules — the
+optimistic board reducer, fractional-index placement, markdown excerpts,
+validation schemas, token formats and closed-registration config parsing — and
+need nothing but Node.
+
+The authorization tests (`src/lib/authorize.test.ts`) are different: the
+`authorize()` helpers *are* SQL membership joins, so proving they scope
+correctly needs a real Postgres. They are **skipped unless
+`TEST_DATABASE_URL` is set**, and they apply the migrations in `./drizzle`
+themselves before seeding fixtures:
+
+```bash
+docker compose up -d db
+psql postgres://postgres:postgres@localhost:5432/postgres \
+  -c 'create database nextquest_test'
+
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/nextquest_test npm test
+```
+
+Point `TEST_DATABASE_URL` at a throwaway database — the suite writes to it and
+does not clean up after itself.
 
 ## Tech stack
 

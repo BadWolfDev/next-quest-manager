@@ -1,16 +1,20 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { db } from "@/db";
-import { lists } from "@/db/schema";
 import { toActionError, type ActionState } from "@/lib/action-result";
-import { recordActivity } from "@/lib/activity";
-import { requireListAccess } from "@/lib/authorize";
-import { createList } from "@/lib/core/board-ops";
+import { archiveList, createList, renameList } from "@/lib/core/board-ops";
 import { listNameSchema, uuidSchema } from "@/lib/validation";
+
+/**
+ * List actions.
+ *
+ * Every one is a thin wrapper over `lib/core/board-ops`, which authorises at
+ * the `member` floor, writes the activity row and touches
+ * `boards.updated_at` inside a single transaction — the same implementation
+ * MCP's `create_list` / `rename_list` / `archive_list` call.
+ */
 
 const createListSchema = z.object({
   boardId: uuidSchema,
@@ -50,35 +54,14 @@ export async function renameListAction(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    const { listId, name } = renameListSchema.parse({
+    const input = renameListSchema.parse({
       listId: formData.get("listId"),
       name: formData.get("name"),
     });
 
-    const ctx = await requireListAccess(listId, "member");
+    const { boardId } = await renameList(input, { source: "ui" });
 
-    await db.transaction(async (tx) => {
-      const [previous] = await tx
-        .select({ name: lists.name })
-        .from(lists)
-        .where(and(eq(lists.id, listId), eq(lists.boardId, ctx.board.id)))
-        .limit(1);
-
-      await tx
-        .update(lists)
-        .set({ name, updatedAt: new Date() })
-        .where(and(eq(lists.id, listId), eq(lists.boardId, ctx.board.id)));
-
-      await recordActivity(tx, {
-        workspaceId: ctx.workspace.id,
-        boardId: ctx.board.id,
-        actorId: ctx.user.id,
-        type: "list.renamed",
-        data: { listId, from: previous?.name ?? null, to: name },
-      });
-    });
-
-    revalidatePath(`/b/${ctx.board.id}`);
+    revalidatePath(`/b/${boardId}`);
     return { ok: true };
   } catch (error) {
     return toActionError(error);
@@ -96,32 +79,9 @@ export async function archiveListAction(
   try {
     const { listId } = listIdSchema.parse({ listId: formData.get("listId") });
 
-    const ctx = await requireListAccess(listId, "member");
+    const { boardId } = await archiveList({ listId }, { source: "ui" });
 
-    await db.transaction(async (tx) => {
-      const [list] = await tx
-        .select({ name: lists.name })
-        .from(lists)
-        .where(and(eq(lists.id, listId), eq(lists.boardId, ctx.board.id)))
-        .limit(1);
-
-      if (!list) return;
-
-      await tx
-        .update(lists)
-        .set({ archivedAt: new Date(), updatedAt: new Date() })
-        .where(and(eq(lists.id, listId), eq(lists.boardId, ctx.board.id)));
-
-      await recordActivity(tx, {
-        workspaceId: ctx.workspace.id,
-        boardId: ctx.board.id,
-        actorId: ctx.user.id,
-        type: "list.archived",
-        data: { listId, name: list.name },
-      });
-    });
-
-    revalidatePath(`/b/${ctx.board.id}`);
+    revalidatePath(`/b/${boardId}`);
     return { ok: true };
   } catch (error) {
     return toActionError(error);

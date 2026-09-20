@@ -212,6 +212,15 @@ export const cards = pgTable(
     description: text("description"),
     position: position("position").notNull(),
     dueDate: timestamp("due_date", { withTimezone: true, mode: "date" }),
+    /**
+     * When the due-date cron last sent a reminder for this card. Null = never.
+     * Cleared whenever the due date changes, so moving a deadline re-arms the
+     * reminder. The cron filters on it so a card is only ever announced once.
+     */
+    dueRemindedAt: timestamp("due_reminded_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     archivedAt: timestamp("archived_at", { withTimezone: true, mode: "date" }),
     createdBy: uuid("created_by").references(() => users.id, {
       onDelete: "set null",
@@ -224,6 +233,9 @@ export const cards = pgTable(
     index("cards_board_idx").on(table.boardId),
     index("cards_list_position_idx").on(table.listId, table.position),
     index("cards_due_date_idx").on(table.dueDate),
+    // The due-reminder cron scans on (due_date, due_reminded_at); both columns
+    // in one index keeps that sweep off a sequential scan.
+    index("cards_due_reminder_idx").on(table.dueDate, table.dueRemindedAt),
   ],
 );
 
@@ -281,6 +293,36 @@ export const cardAssignees = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* Watchers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Who has opted in to hear about a card.
+ *
+ * Deliberately a separate table from `card_assignees`: watching is interest,
+ * assignment is responsibility, and the two diverge (you unassign someone but
+ * they still want to follow the thread). Assigning and commenting auto-watch,
+ * so the common case needs no explicit action.
+ */
+export const cardWatchers = pgTable(
+  "card_watchers",
+  {
+    cardId: uuid("card_id")
+      .notNull()
+      .references(() => cards.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.cardId, table.userId] }),
+    index("card_watchers_card_idx").on(table.cardId),
+    index("card_watchers_user_idx").on(table.userId),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /* Comments, checklists                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -296,6 +338,15 @@ export const comments = pgTable(
     }),
     /** Markdown source. Never rendered as raw HTML. */
     body: text("body").notNull(),
+    /**
+     * Set the first time the body is edited, and on every edit after.
+     *
+     * A separate column from `updated_at` on purpose: `updated_at` is
+     * non-null and defaults to the insert time, so it cannot distinguish
+     * "never edited" from "edited immediately". `edited_at` being null is the
+     * signal the UI needs to decide whether to show an "edited" marker.
+     */
+    editedAt: timestamp("edited_at", { withTimezone: true, mode: "date" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -593,6 +644,12 @@ export const cardsRelations = relations(cards, ({ one, many }) => ({
   checklists: many(checklists),
   cardLabels: many(cardLabels),
   assignees: many(cardAssignees),
+  watchers: many(cardWatchers),
+}));
+
+export const cardWatchersRelations = relations(cardWatchers, ({ one }) => ({
+  card: one(cards, { fields: [cardWatchers.cardId], references: [cards.id] }),
+  user: one(users, { fields: [cardWatchers.userId], references: [users.id] }),
 }));
 
 export const labelsRelations = relations(labels, ({ one, many }) => ({
@@ -645,4 +702,5 @@ export type List = typeof lists.$inferSelect;
 export type Card = typeof cards.$inferSelect;
 export type Label = typeof labels.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
+export type CardWatcher = typeof cardWatchers.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;

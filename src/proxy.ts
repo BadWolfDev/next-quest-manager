@@ -46,12 +46,13 @@ export const config = {
   matcher: [
     /*
      * Everything except Next internals, static assets, the Auth.js endpoints,
-     * and the MCP endpoint.
+     * the MCP endpoint and the cron endpoints.
      *
-     * `/api/mcp` authenticates with a bearer token, not a session cookie. If it
-     * were matched here, every MCP request would be answered with a 307 to
-     * /login instead of the 401 the protocol expects.
+     * `/api/mcp` and `/api/cron/*` authenticate with a bearer token, not a
+     * session cookie. If they were matched here, every such request would be
+     * answered with a 307 to /login instead of the 401 the caller expects —
+     * and the cron sweep would never reach its handler at all.
      */
-    "/((?!api/auth|api/mcp|api/public|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api/auth|api/mcp|api/cron|api/public|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

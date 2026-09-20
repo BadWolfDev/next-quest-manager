@@ -24,6 +24,14 @@ function sentence(n: NotificationRow): string {
   switch (n.type) {
     case "card.assigned":
       return `You were assigned “${d.cardTitle ?? "a card"}”${d.boardName ? ` on ${d.boardName}` : ""}.`;
+    case "card.commented":
+      return `New comment on “${d.cardTitle ?? "a card"}”${d.boardName ? ` on ${d.boardName}` : ""}.`;
+    case "card.mentioned":
+      return `You were mentioned on “${d.cardTitle ?? "a card"}”${d.boardName ? ` on ${d.boardName}` : ""}.`;
+    case "card.due_soon":
+      return `“${d.cardTitle ?? "A card"}” is due within 24 hours.`;
+    case "card.overdue":
+      return `“${d.cardTitle ?? "A card"}” is overdue.`;
     case "workspace.role_changed":
       return `Your role in ${d.workspaceName ?? "a workspace"} is now ${d.role ?? "updated"}.`;
     case "workspace.added":
