@@ -3,10 +3,7 @@ import "server-only";
 import { del, get, put } from "@vercel/blob";
 
 import type { AttachmentStorage } from "@/db/schema";
-import {
-  MAX_BLOB_ATTACHMENT_BYTES,
-  MAX_POSTGRES_ATTACHMENT_BYTES,
-} from "@/lib/attachments";
+import { MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 
 /**
  * Where attachment bytes go — the one place that decides.
@@ -18,8 +15,11 @@ import {
  *    never touch Postgres, and the store's URLs are never handed to a browser:
  *    every read is proxied through `/api/attachments/[id]` after an
  *    authorization check.
- *  - unset → the bytes go in `card_attachments.data` (`bytea`), with a lower
- *    per-file cap because they then live in the primary database.
+ *  - unset → the bytes go in `card_attachments.data` (`bytea`).
+ *
+ * Either way the upload arrives through our own route handler, so one per-file
+ * cap applies to both: `MAX_ATTACHMENT_BYTES`, sized to fit Vercel's function
+ * request-body limit with the multipart envelope (see `lib/attachments.ts`).
  *
  * The choice is made per *upload* and recorded on the row (`storage`). Reads
  * and deletes dispatch on the row, never on the current environment, so
@@ -32,24 +32,35 @@ export function uploadBackend(): {
   kind: AttachmentStorage;
   maxBytes: number;
 } {
-  return process.env.BLOB_READ_WRITE_TOKEN
-    ? { kind: "blob", maxBytes: MAX_BLOB_ATTACHMENT_BYTES }
-    : { kind: "postgres", maxBytes: MAX_POSTGRES_ATTACHMENT_BYTES };
+  return {
+    kind: process.env.BLOB_READ_WRITE_TOKEN ? "blob" : "postgres",
+    maxBytes: MAX_ATTACHMENT_BYTES,
+  };
 }
 
-/** Write bytes to the private store. Returns the pathname to record. */
+/**
+ * Write bytes to the private store. Returns the pathname to record.
+ *
+ * Stored as `application/octet-stream` whatever the file is: what it is served
+ * as is decided by our route from the sniffed type on the row, and the store
+ * never needs to know.
+ */
 export async function putBlobObject(
   pathname: string,
   bytes: Uint8Array,
-  contentType: string,
 ): Promise<string> {
-  const result = await put(pathname, Buffer.from(bytes), {
-    access: "private",
-    contentType,
-    // The pathname is a fresh uuid; a collision is a bug, not a retry.
-    addRandomSuffix: false,
-    allowOverwrite: false,
-  });
+  const result = await put(
+    pathname,
+    // A view over the same memory, not a copy.
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    {
+      access: "private",
+      contentType: "application/octet-stream",
+      // The pathname is a fresh uuid; a collision is a bug, not a retry.
+      addRandomSuffix: false,
+      allowOverwrite: false,
+    },
+  );
   return result.pathname;
 }
 

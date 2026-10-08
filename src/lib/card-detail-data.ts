@@ -6,6 +6,7 @@ import { requireWorkspaceMember, WRITE_MIN_ROLE } from "@/lib/authorize";
 import { db } from "@/db";
 import { boards, lists } from "@/db/schema";
 import { uploadBackend } from "@/lib/attachment-storage";
+import { isInlineImage } from "@/lib/attachments";
 import { listAssignableMembersFor } from "@/lib/core/members";
 import { getCardModalData } from "@/lib/core/board-ops";
 import { safeRead } from "@/lib/safe-read";
@@ -119,6 +120,7 @@ export async function loadCardDetail(
       id: a.id,
       filename: a.filename,
       contentType: a.contentType,
+      isImage: isInlineImage(a.contentType),
       byteSize: a.byteSize,
       createdAtIso: a.createdAt.toISOString(),
       uploaderName: a.uploaderName,

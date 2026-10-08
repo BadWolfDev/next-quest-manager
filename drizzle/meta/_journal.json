@@ -57,6 +57,13 @@
       "when": 1791477287620,
       "tag": "0007_card_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791486161152,
+      "tag": "0008_attachment_content_type",
+      "breakpoints": true
     }
   ]
 }

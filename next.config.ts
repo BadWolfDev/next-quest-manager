@@ -29,7 +29,10 @@ const csp = [
   ...(isDev ? [] : ["upgrade-insecure-requests"]),
 ].join("; ");
 
-/** For `/api/attachments/[id]`: show the image, nothing else, sandboxed. */
+/**
+ * For `/api/attachments/[id]`: show the image (or nothing — every other file
+ * is a download), load nothing, sandboxed.
+ */
 const ATTACHMENT_CSP = "default-src 'none'; sandbox";
 
 const securityHeaders = [

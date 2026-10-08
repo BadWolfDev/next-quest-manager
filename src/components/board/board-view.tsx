@@ -29,6 +29,10 @@ import { AddList } from "@/components/board/add-list";
 import type { AssignableMember } from "@/components/board/assignee-popover";
 import { BoardFilterBar } from "@/components/board/board-filter-bar";
 import {
+  AttachmentUploadContext,
+  usePreventFileDropNavigation,
+} from "@/components/card/attachment-upload";
+import {
   EMPTY_FILTER,
   filterBoard,
   type BoardFilter,
@@ -72,6 +76,7 @@ export function BoardView({
   members,
   labels,
   canWrite,
+  attachmentMaxBytes,
 }: {
   boardId: string;
   lists: BoardListState[];
@@ -80,7 +85,15 @@ export function BoardView({
   labels: BoardCardLabel[];
   /** False for viewers: no drag, no composers, no assignee controls. */
   canWrite: boolean;
+  /**
+   * Per-file cap for files dropped onto a card face. Null for viewers, who get
+   * no drop targets at all.
+   */
+  attachmentMaxBytes: number | null;
 }) {
+  // A file dropped between cards must not navigate the tab away to it.
+  usePreventFileDropNavigation();
+
   const [, startTransition] = useTransition();
 
   // Server truth -> optimistic overlay. `applyMove` is the same reducer used
@@ -375,6 +388,7 @@ export function BoardView({
   }
 
   return (
+    <AttachmentUploadContext.Provider value={attachmentMaxBytes}>
     <div
       className="flex h-full flex-col"
       // Focus anywhere inside the board (a composer, a rename field) pauses
@@ -460,5 +474,6 @@ export function BoardView({
       </DragOverlay>
     </DndContext>
     </div>
+    </AttachmentUploadContext.Provider>
   );
 }

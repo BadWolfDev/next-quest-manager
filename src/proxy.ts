@@ -57,11 +57,18 @@ export const config = {
      * and token endpoints. They are called by machines with no cookie jar, so a
      * 307 to /login would break discovery entirely.
      *
+     * `/api/attachments/*` authorises every request itself (a 404 for anyone
+     * who may not see the card) and must not be matched: when the proxy runs,
+     * Next.js clones the request body and reads it to the end before the
+     * handler is invoked. The upload route is built to refuse an outsider, a
+     * viewer, a full card or an oversized Content-Length *before* reading the
+     * body; matched here, every one of those would first cost a full upload.
+     *
      * `/oauth/authorize` is deliberately **not** exempt: it is the one OAuth
      * surface that needs a human, and being matched here is exactly what sends
      * a signed-out visitor to /login?next=… with the authorization request
      * intact.
      */
-    "/((?!api/auth|api/mcp|api/cron|api/oauth|api/public|\\.well-known|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api/auth|api/mcp|api/cron|api/oauth|api/public|api/attachments|\\.well-known|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

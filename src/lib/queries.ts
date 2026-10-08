@@ -165,7 +165,7 @@ export type BoardList = {
      * payload. See lib/excerpt.ts.
      */
     excerpt: string | null;
-    /** Image attachments on the card, for the paperclip badge. */
+    /** Attachments on the card (images and files), for the paperclip badge. */
     attachmentCount: number;
   }[];
 };

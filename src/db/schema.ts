@@ -419,7 +419,7 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
 });
 
 /**
- * An image attached to a card.
+ * A file attached to a card — an image or anything else.
  *
  * The bytes are in exactly one of two places, chosen at upload time by
  * `lib/attachment-storage.ts`: a private Vercel Blob object (`blob_pathname`)
@@ -444,7 +444,12 @@ export const cardAttachments = pgTable(
     }),
     /** Display name only — sanitised, never used as a storage path. */
     filename: text("filename").notNull(),
-    /** Sniffed from the magic bytes at upload, never the client's claim. */
+    /**
+     * Sniffed from the magic bytes at upload, never the client's claim: one of
+     * the four raster image types, or `application/octet-stream` for anything
+     * else. It is also exactly what gets served — only the image types are ever
+     * shown inline (see `servedAs` in `lib/attachments.ts`).
+     */
     contentType: text("content_type").notNull(),
     byteSize: integer("byte_size").notNull(),
     storage: attachmentStorageEnum("storage").notNull(),
@@ -458,6 +463,13 @@ export const cardAttachments = pgTable(
     index("card_attachments_card_idx").on(table.cardId, table.createdAt),
     index("card_attachments_board_idx").on(table.boardId),
     index("card_attachments_uploader_idx").on(table.uploaderId),
+    // Defence in depth for the serving rule: nothing but a sniffed raster type
+    // or the opaque download type can ever be stored, so no other value can
+    // reach a Content-Type header.
+    check(
+      "card_attachments_content_type",
+      sql`${table.contentType} in ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream')`,
+    ),
     check(
       "card_attachments_storage_payload",
       sql`(${table.storage} = 'blob' and ${table.blobPathname} is not null and ${table.data} is null)

@@ -8,12 +8,30 @@ import { AuthorizationError, UploadRejectedError } from "@/lib/errors";
 
 /**
  * Card attachments, against a real Postgres, on the Postgres-fallback backend
- * (`BLOB_READ_WRITE_TOKEN` is cleared). Skipped when `TEST_DATABASE_URL` is
+ * (`BLOB_READ_WRITE_TOKEN` is cleared, except in the one test that sets it,
+ * against an in-memory fake of the store's network calls). Skipped when `TEST_DATABASE_URL` is
  * unset — see `lib/authorize.test.ts` for how to run it.
  *
  * Every call passes an explicit actor, so Auth.js is never consulted.
  */
 vi.mock("@/auth", () => ({ auth: async () => null }));
+
+/** An in-memory stand-in for the private Blob store's network calls. */
+const blobStore = vi.hoisted(() => new Map<string, Uint8Array>());
+vi.mock("@/lib/attachment-storage", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/attachment-storage")>()),
+  putBlobObject: vi.fn(async (pathname: string, bytes: Uint8Array) => {
+    blobStore.set(pathname, new Uint8Array(bytes));
+    return pathname;
+  }),
+  getBlobObject: vi.fn(async (pathname: string) => {
+    const bytes = blobStore.get(pathname);
+    return bytes ? new Blob([bytes as Uint8Array<ArrayBuffer>]).stream() : null;
+  }),
+  deleteBlobObjects: vi.fn(async (pathnames: string[]) => {
+    for (const p of pathnames) blobStore.delete(p);
+  }),
+}));
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 
@@ -175,7 +193,7 @@ describe.skipIf(!TEST_DATABASE_URL)("card attachments (Postgres)", () => {
   it("stores an upload in Postgres, sniffing the type and sanitising the name", async () => {
     const before = await boardUpdatedAt();
     const { attachment, boardId } = await ops.uploadAttachment(
-      { cardId: ids.card, readFile: file(PNG, "../../evil‮gpj.exe") },
+      { cardId: ids.card, readFile: file(PNG, "../../evil\u202egpj.exe") },
       { actor: actor(ids.uploader) },
     );
 
@@ -227,23 +245,39 @@ describe.skipIf(!TEST_DATABASE_URL)("card attachments (Postgres)", () => {
     expect(readFile).not.toHaveBeenCalled();
   });
 
-  it("rejects SVG and other non-images by content, whatever the name says", async () => {
+  it("accepts SVG and other non-images, stored and served as opaque downloads", async () => {
+    const { attachment } = await ops.uploadAttachment(
+      { cardId: ids.card, readFile: file(SVG, "innocent.png") },
+      { actor: actor(ids.uploader) },
+    );
+    expect(attachment.contentType).toBe("application/octet-stream");
+    expect(attachment.filename).toBe("innocent.png");
+
+    const opened = await ops.openAttachment(attachment.id, actor(ids.viewer));
+    if (!opened || opened.notModified) throw new Error("expected bytes");
+    const { servedAs } = await import("@/lib/attachments");
+    const served = servedAs(opened.contentType, opened.filename);
+    expect(served.inline).toBe(false);
+    expect(served.contentType).toBe("application/octet-stream");
+    expect(served.contentDisposition.startsWith("attachment;")).toBe(true);
+  });
+
+  it("rejects an empty file", async () => {
     const error = await ops
       .uploadAttachment(
-        { cardId: ids.card, readFile: file(SVG, "innocent.png") },
+        { cardId: ids.card, readFile: file(new Uint8Array(), "empty.txt") },
         { actor: actor(ids.uploader) },
       )
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(UploadRejectedError);
-    expect((error as UploadRejectedError).status).toBe(415);
   });
 
-  it("enforces the Postgres-fallback size cap", async () => {
-    const { MAX_POSTGRES_ATTACHMENT_BYTES } = await import("@/lib/attachments");
-    const big = new Uint8Array(MAX_POSTGRES_ATTACHMENT_BYTES + 1);
+  it("enforces the single per-file cap", async () => {
+    const { MAX_ATTACHMENT_BYTES } = await import("@/lib/attachments");
+    const big = new Uint8Array(MAX_ATTACHMENT_BYTES + 1);
     big.set(PNG);
     const readFile = vi.fn(async (maxBytes: number) => {
-      expect(maxBytes).toBe(MAX_POSTGRES_ATTACHMENT_BYTES);
+      expect(maxBytes).toBe(MAX_ATTACHMENT_BYTES);
       return { filename: "big.png", bytes: big };
     });
     const error = await ops
@@ -255,6 +289,37 @@ describe.skipIf(!TEST_DATABASE_URL)("card attachments (Postgres)", () => {
     expect((error as UploadRejectedError).status).toBe(413);
   });
 
+  it("stores in the private Blob store when configured, and deletes the object with the row", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_fake_for_tests";
+    try {
+      const { attachment } = await ops.uploadAttachment(
+        { cardId: ids.card, readFile: file(PNG, "shot.png") },
+        { actor: actor(ids.uploader) },
+      );
+      const [row] = await db
+        .select()
+        .from(schema.cardAttachments)
+        .where(drizzle.eq(schema.cardAttachments.id, attachment.id));
+      expect(row.storage).toBe("blob");
+      expect(row.data).toBeNull();
+      expect(row.blobPathname).toBe(`attachments/${attachment.id}`);
+      expect(blobStore.get(row.blobPathname!)).toEqual(PNG);
+
+      const opened = await ops.openAttachment(attachment.id, actor(ids.viewer));
+      expect(opened && !opened.notModified && opened.contentType).toBe(
+        "image/png",
+      );
+
+      await ops.deleteAttachment(
+        { attachmentId: attachment.id },
+        { actor: actor(ids.uploader) },
+      );
+      expect(blobStore.has(row.blobPathname!)).toBe(false);
+    } finally {
+      delete process.env.BLOB_READ_WRITE_TOKEN;
+    }
+  });
+
   it("serves bytes to a viewer and 404s an outsider", async () => {
     const { attachment } = await ops.uploadAttachment(
       { cardId: ids.card, readFile: file(PNG) },
@@ -262,15 +327,49 @@ describe.skipIf(!TEST_DATABASE_URL)("card attachments (Postgres)", () => {
     );
 
     const opened = await ops.openAttachment(attachment.id, actor(ids.viewer));
-    expect(opened?.contentType).toBe("image/png");
+    if (!opened || opened.notModified) throw new Error("expected bytes");
+    expect(opened.contentType).toBe("image/png");
+    expect(opened.etag).toBe(`"${attachment.id}"`);
     // The Postgres fallback hands back the driver's Buffer uncopied.
-    expect(new Uint8Array(opened?.body as Uint8Array)).toEqual(PNG);
+    expect(new Uint8Array(opened.body as Uint8Array)).toEqual(PNG);
 
     await expect(
       ops.openAttachment(attachment.id, actor(ids.outsider)),
     ).rejects.toBeInstanceOf(AuthorizationError);
     await expect(
       ops.openAttachment(randomUUID(), actor(ids.uploader)),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+  });
+
+  it("answers a matching If-None-Match with not-modified only after authorization", async () => {
+    const { attachment } = await ops.uploadAttachment(
+      { cardId: ids.card, readFile: file(PNG) },
+      { actor: actor(ids.uploader) },
+    );
+    const etag = `"${attachment.id}"`;
+
+    const revalidated = await ops.openAttachment(attachment.id, actor(ids.viewer), {
+      ifNoneMatch: etag,
+    });
+    expect(revalidated).toEqual({ notModified: true, etag });
+
+    const stale = await ops.openAttachment(attachment.id, actor(ids.viewer), {
+      ifNoneMatch: '"something-else"',
+    });
+    expect(stale?.notModified).toBe(false);
+
+    // An outsider presenting the right validator still gets "not found".
+    await expect(
+      ops.openAttachment(attachment.id, actor(ids.outsider), { ifNoneMatch: etag }),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+
+    // So does anyone, once the attachment is gone.
+    await ops.deleteAttachment(
+      { attachmentId: attachment.id },
+      { actor: actor(ids.uploader) },
+    );
+    await expect(
+      ops.openAttachment(attachment.id, actor(ids.uploader), { ifNoneMatch: etag }),
     ).rejects.toBeInstanceOf(AuthorizationError);
   });
 
@@ -336,8 +435,13 @@ describe.skipIf(!TEST_DATABASE_URL)("card attachments (Postgres)", () => {
           drizzle.eq(schema.activityLog.type, "attachment.deleted"),
         ),
       );
-    expect(deletions).toHaveLength(2);
-    expect(deletions.some((d) => d.data.source === "mcp")).toBe(true);
+    const ours = deletions.filter((d) =>
+      ([first.attachment.id, second.attachment.id] as string[]).includes(
+        d.data.attachmentId as string,
+      ),
+    );
+    expect(ours).toHaveLength(2);
+    expect(ours.some((d) => d.data.source === "mcp")).toBe(true);
   });
 
   it("logs a concurrent double delete exactly once", async () => {
