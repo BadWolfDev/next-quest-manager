@@ -56,9 +56,9 @@ function sentence(entry: ActivityEntry): string {
     case "comment.created":
       return `${who} commented on a card`;
     case "attachment.added":
-      return `${who} attached “${d.filename ?? "an image"}”`;
+      return `${who} attached “${d.filename ?? "a file"}”`;
     case "attachment.deleted":
-      return `${who} removed the attachment “${d.filename ?? "an image"}”`;
+      return `${who} removed the attachment “${d.filename ?? "a file"}”`;
     default:
       return `${who} — ${entry.type}`;
   }

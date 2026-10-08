@@ -1,0 +1,1 @@
+ALTER TABLE "card_attachments" ADD CONSTRAINT "card_attachments_content_type" CHECK ("card_attachments"."content_type" in ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/octet-stream'));

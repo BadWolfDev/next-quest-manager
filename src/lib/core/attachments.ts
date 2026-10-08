@@ -14,11 +14,12 @@ import {
   uploadBackend,
 } from "@/lib/attachment-storage";
 import {
-  ATTACHMENT_TYPES,
   MAX_ATTACHMENTS_PER_CARD,
+  attachmentETag,
   formatBytes,
+  ifNoneMatchHits,
   sanitizeFilename,
-  sniffImageType,
+  storedContentType,
 } from "@/lib/attachments";
 import { requireCardAccess, READ_MIN_ROLE, type Actor } from "@/lib/authorize";
 import { sourceData, touchBoard, type OpContext } from "@/lib/core/board-ops";
@@ -34,6 +35,10 @@ import { rateLimit } from "@/lib/rate-limit";
  * `requireCardAccess` before any data is touched. The card's attachment list is
  * read by `getCardModalData` alongside the rest of the card.
  *
+ * Any file may be attached. Its stored `content_type` is decided here, from its
+ * leading bytes only: a sniffed raster image type, or `application/octet-stream`.
+ * How that is served is decided by `servedAs` in `lib/attachments.ts`.
+ *
  * There is deliberately no MCP upload tool. `get_card` reports attachment
  * metadata; bytes only ever leave through `/api/attachments/[id]`.
  */
@@ -43,14 +48,19 @@ const UPLOAD_RATE_LIMIT = { limit: 30, windowSeconds: 10 * 60 } as const;
 
 export type UploadedFile = { filename: string; bytes: Uint8Array };
 
+/** The one wording of the size refusal, shared with the upload route. */
+export function tooLargeMessage(maxBytes: number): string {
+  return `Files can be at most ${formatBytes(maxBytes)}.`;
+}
+
 /**
- * Attach an image to a card.
+ * Attach a file to a card.
  *
  * `readFile` is called only *after* the caller is authorised, rate-limited and
  * the card is known to have room — so an outsider, a viewer or a flood never
  * gets as far as making the server buffer a request body. It receives the
- * active backend's byte cap so the transport can refuse an oversized body by
- * its Content-Length before reading it.
+ * per-file cap so the transport can refuse an oversized body by its
+ * Content-Length before reading it.
  */
 export async function uploadAttachment(
   input: {
@@ -76,37 +86,25 @@ export async function uploadAttachment(
 
   const backend = uploadBackend();
   const file = await input.readFile(backend.maxBytes);
+  const size = file.bytes.byteLength;
 
-  if (file.bytes.byteLength === 0) {
+  if (size === 0) {
     throw new UploadRejectedError("That file is empty.");
   }
-  if (file.bytes.byteLength > backend.maxBytes) {
-    throw new UploadRejectedError(
-      `Images can be at most ${formatBytes(backend.maxBytes)}.`,
-      413,
-    );
+  if (size > backend.maxBytes) {
+    throw new UploadRejectedError(tooLargeMessage(backend.maxBytes), 413);
   }
 
-  const contentType = sniffImageType(file.bytes);
-  if (!contentType) {
-    throw new UploadRejectedError(
-      "Only PNG, JPEG, GIF and WebP images can be attached.",
-      415,
-    );
-  }
-
+  const contentType = storedContentType(file.bytes);
   const id = randomUUID();
   const filename = sanitizeFilename(file.filename);
 
   // The object is written before the row so a row never points at nothing.
-  // The pathname is the attachment's own uuid — never anything user-supplied.
+  // The pathname is the attachment's own uuid — never anything user-supplied,
+  // and no extension: what the file is lives on the row, not in its name.
   const blobPathname =
     backend.kind === "blob"
-      ? await putBlobObject(
-          `attachments/${id}.${ATTACHMENT_TYPES[contentType]}`,
-          file.bytes,
-          contentType,
-        )
+      ? await putBlobObject(`attachments/${id}`, file.bytes)
       : null;
 
   try {
@@ -139,10 +137,17 @@ export async function uploadAttachment(
           uploaderId: ctx.user.id,
           filename,
           contentType,
-          byteSize: file.bytes.byteLength,
+          byteSize: size,
           storage: backend.kind,
           blobPathname,
-          data: blobPathname ? null : Buffer.from(file.bytes),
+          // A view over the request's bytes, not a copy.
+          data: blobPathname
+            ? null
+            : Buffer.from(
+                file.bytes.buffer,
+                file.bytes.byteOffset,
+                file.bytes.byteLength,
+              ),
         })
         .returning({ createdAt: cardAttachments.createdAt });
 
@@ -162,13 +167,7 @@ export async function uploadAttachment(
 
     return {
       boardId: ctx.board.id,
-      attachment: {
-        id,
-        filename,
-        contentType,
-        byteSize: file.bytes.byteLength,
-        createdAt,
-      },
+      attachment: { id, filename, contentType, byteSize: size, createdAt },
     };
   } catch (error) {
     if (blobPathname)
@@ -195,7 +194,7 @@ async function assertRoom(cardId: string) {
 /**
  * Remove an attachment — row and bytes.
  *
- * A deliberate exception to soft deletes: an orphaned image has no history
+ * A deliberate exception to soft deletes: an orphaned file has no history
  * value, and keeping its bytes after the user asked for them gone is the
  * opposite of what they meant. The activity entry records that it existed.
  *
@@ -271,14 +270,36 @@ export async function deleteAttachment(
   return { boardId: ctx.board.id, cardId: row.cardId };
 }
 
+export type OpenedAttachment =
+  | { notModified: true; etag: string }
+  | {
+      notModified: false;
+      etag: string;
+      filename: string;
+      /** The *stored* type. The route passes it through `servedAs`. */
+      contentType: string;
+      byteSize: number;
+      body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>;
+    };
+
 /**
  * Resolve an attachment for serving, authorised at the read floor.
+ *
+ * Conditional requests are answered *after* authorization: a matching
+ * `If-None-Match` yields `notModified` only once the caller has been shown to
+ * be allowed to read the card, and without touching the bytes. So the browser
+ * may keep a copy, but it can never use it without asking first — a signed-out
+ * or removed user, or a deleted attachment, gets the 404, never the cache.
  *
  * Returns null when the bytes are gone from the store (the route turns that
  * into the same 404 as "no such attachment"). The private blob URL is never
  * part of the result — the bytes are streamed back through our own route.
  */
-export async function openAttachment(attachmentId: string, actor?: Actor) {
+export async function openAttachment(
+  attachmentId: string,
+  actor?: Actor,
+  { ifNoneMatch = null }: { ifNoneMatch?: string | null } = {},
+): Promise<OpenedAttachment | null> {
   // Only the card id is read before authorization; nothing about the file
   // itself is selected until the caller is known to be allowed to see it.
   const [ref] = await db
@@ -298,13 +319,15 @@ export async function openAttachment(attachmentId: string, actor?: Actor) {
       byteSize: cardAttachments.byteSize,
       storage: cardAttachments.storage,
       blobPathname: cardAttachments.blobPathname,
-      data: cardAttachments.data,
     })
     .from(cardAttachments)
     .where(eq(cardAttachments.id, attachmentId))
     .limit(1);
 
   if (!row) return null;
+
+  const etag = attachmentETag(attachmentId);
+  if (ifNoneMatchHits(ifNoneMatch, etag)) return { notModified: true, etag };
 
   // Postgres rows hand back the driver's Buffer as-is — it is already a
   // Uint8Array, and `Response` accepts it without another copy. The cast only
@@ -313,12 +336,19 @@ export async function openAttachment(attachmentId: string, actor?: Actor) {
   if (row.storage === "blob" && row.blobPathname) {
     body = await getBlobObject(row.blobPathname);
   } else if (row.storage === "postgres") {
-    body = row.data as Uint8Array<ArrayBuffer> | null;
+    const [bytes] = await db
+      .select({ data: cardAttachments.data })
+      .from(cardAttachments)
+      .where(eq(cardAttachments.id, attachmentId))
+      .limit(1);
+    body = (bytes?.data ?? null) as Uint8Array<ArrayBuffer> | null;
   }
 
   if (!body) return null;
 
   return {
+    notModified: false,
+    etag,
     filename: row.filename,
     contentType: row.contentType,
     byteSize: row.byteSize,

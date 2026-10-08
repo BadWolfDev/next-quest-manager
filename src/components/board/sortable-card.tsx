@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CalendarClock, Paperclip } from "lucide-react";
+import { CalendarClock, Loader2, Paperclip, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
 
@@ -15,6 +15,12 @@ import type { BoardCardState } from "@/components/board/board-state";
 import { CardMenu, type CardEdge } from "@/components/board/card-menu";
 import { DUE_TONE, dueLabel, dueStatus } from "@/components/board/due-status";
 import { LabelChips } from "@/components/board/label-chips";
+import {
+  describeProgress,
+  useAttachmentUploader,
+  useBoardAttachmentMaxBytes,
+  useFileDropTarget,
+} from "@/components/card/attachment-upload";
 import { useNow } from "@/hooks/use-now";
 import { cn } from "@/lib/utils";
 
@@ -172,11 +178,28 @@ export function SortableCard({
     data: { type: "card", listId },
   });
 
+  // Dropping files from the OS onto the card attaches them. These are native
+  // HTML5 drag events, which dnd-kit's pointer/keyboard sensors never see, so
+  // the two cannot interfere; non-file drags are ignored. The board only
+  // provides an upload config to writers, so viewers get no target.
+  const maxBytes = useBoardAttachmentMaxBytes();
+  const uploader = useAttachmentUploader({
+    cardId: card.id,
+    existingCount: card.attachmentCount,
+    maxBytes: canWrite ? maxBytes : null,
+  });
+  const { over: fileOver, handlers: fileDrop } = useFileDropTarget(
+    canWrite && maxBytes !== null,
+    (files) => void uploader.upload(files),
+  );
+  const { progress } = uploader;
+
   return (
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className="focus-visible:ring-ring/70 rounded-lg focus-visible:outline-none focus-visible:ring-2"
+      className="focus-visible:ring-ring/70 relative rounded-lg focus-visible:outline-none focus-visible:ring-2"
+      {...fileDrop}
       // The whole card is the drag handle. Keyboard users get dnd-kit's
       // built-in behaviour: focus, Space to lift, arrows to move, Space to drop.
       // `attributes` already carries aria-roledescription, so it is spread last.
@@ -217,6 +240,31 @@ export function SortableCard({
         canMoveDown={canMoveDown}
         onMoveToEdge={onMoveToEdge}
       />
+
+      {fileOver || progress ? (
+        <span
+          aria-hidden={!progress}
+          role={progress ? "status" : undefined}
+          className={cn(
+            "bg-background/90 pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-2 text-xs font-medium",
+            fileOver ? "border-primary" : "border-muted-foreground/40",
+          )}
+        >
+          {progress ? (
+            <>
+              <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+              <span className="truncate">
+                {describeProgress(progress, { withFilename: false })}
+              </span>
+            </>
+          ) : (
+            <>
+              <Upload className="text-primary size-3.5 shrink-0" aria-hidden="true" />
+              Drop to attach
+            </>
+          )}
+        </span>
+      ) : null}
     </li>
   );
 }

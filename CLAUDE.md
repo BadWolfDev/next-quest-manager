@@ -33,14 +33,16 @@ breaks the deployment promise.
 
 **The optional-bucket pattern.** An optional service is acceptable only when
 Postgres is a complete fallback for it, so an instance with nothing but
-`DATABASE_URL` + `AUTH_SECRET` still has the whole feature. Card image
-attachments are the one instance: with `BLOB_READ_WRITE_TOKEN` set the bytes go
-to a **private** Vercel Blob store; unset, they go in `card_attachments.data`
-(`bytea`) with a lower per-file cap. Rules that carry to any future optional
-service:
+`DATABASE_URL` + `AUTH_SECRET` still has the whole feature. Card attachments
+are the one instance: with `BLOB_READ_WRITE_TOKEN` set the bytes go to a
+**private** Vercel Blob store; unset, they go in `card_attachments.data`
+(`bytea`). Same upload route, same cap either way. Rules that carry to any
+future optional service:
 
 - The backend choice lives in one small `server-only` module
-  (`src/lib/attachment-storage.ts`); nothing else reads the env var.
+  (`src/lib/attachment-storage.ts`); nothing else reads the env var. The client
+  learns the per-file cap from the server-rendered payload
+  (`attachmentMaxBytes`), never from the environment.
 - The choice is recorded **per row** (`card_attachments.storage`). Reads and
   deletes dispatch on the row, never on the current environment, so flipping
   the variable later orphans nothing.
@@ -299,7 +301,7 @@ came from was archived meanwhile — restoring something into an invisible list
 is indistinguishable from the restore having failed.
 
 One deliberate exception: **attachments are hard-deleted**, row and bytes.
-Orphaned image bytes have no history value, and keeping them after someone
+Orphaned file bytes have no history value, and keeping them after someone
 asked for them gone is the opposite of what they meant; the `attachment.deleted`
 activity entry records that it existed. The row is deleted in the transaction
 and the blob object after commit — a failed object delete is logged, not
@@ -307,16 +309,48 @@ surfaced, because nothing can reach an object without its row. Deleting a
 workspace collects its blob pathnames first and discards them after the
 cascade.
 
-**Attachments.** Images only (PNG, JPEG, GIF, WebP), identified by magic-byte
-sniffing in `lib/attachments.ts` — never the client's MIME type or the
-extension; SVG is refused because it is a script vector. Caps: 4 MB per file on
-Blob (Vercel's 4.5 MB body limit), 2 MB on the Postgres fallback, 20 per card,
-and a per-user upload rate limit. Uploads use a route handler
-(`POST /api/attachments?cardId=`), not a server action, so the large-body
-allowance stays on one URL instead of raising `serverActions.bodySizeLimit` for
-every action; `uploadAttachment` authorises, rate-limits and checks room
-*before* the body is read, and the route does the Origin check server actions
-would have done. Deletes are uploader-or-admin/owner, mirroring comment
+**Attachments.** Any file may be attached. What it *is* only decides how it is
+served, and that is decided by magic-byte sniffing in `lib/attachments.ts` alone
+— never the client's MIME type or the extension, neither of which is stored.
+`card_attachments.content_type` holds a sniffed raster type (PNG, JPEG, GIF,
+WebP) or `application/octet-stream`, and a CHECK constraint allows nothing
+else. `servedAs()` is the one serving decision: only those four image types go
+out `inline` with their real type; everything else — SVG (a script vector),
+HTML, PDF, anything unknown — is `Content-Disposition: attachment` +
+`application/octet-stream`. `nosniff` and the `default-src 'none'; sandbox` CSP
+(set in `next.config.ts`) are on every response. The UI renders images as a
+thumbnail grid/viewer and everything else as a download row, from the
+server-computed `isImage`. Files can be added by button, paste, or drag and
+drop — anywhere on the card detail, or onto a card face on the board (native
+file drags only; dnd-kit's pointer sensors never see them).
+
+One cap for every backend: 4.4 MB per file (`MAX_ATTACHMENT_BYTES`). Every
+upload passes through a Vercel function, whose request body is limited to
+"4.5 MB" — read as 4,500,000 bytes, the stricter meaning, since the docs give no
+byte value — and that includes the multipart envelope, for which 100 kB is
+reserved. The UI says 4.4 MB because that is the truth. 20 per card, and a
+per-user upload rate limit.
+
+Uploads use one route handler (`POST /api/attachments?cardId=`) for both
+backends, not a server action, so the large-body allowance stays on one URL
+instead of raising `serverActions.bodySizeLimit` for every action.
+`uploadAttachment` authorises, rate-limits and checks room *before* the body is
+read; the route refuses a Content-Length over 4,500,000 before reading and
+re-checks the parsed file, and does the Origin check server actions would have
+done. `/api/attachments/*` is outside the `proxy.ts` matcher on purpose: when
+the proxy runs, Next.js reads the whole request body before the handler is
+invoked, which would defeat that ordering. Every route there authorises itself
+and answers 404. (Direct-to-Blob client uploads were tried and removed: the cap
+makes them unnecessary, and they cost a pending-upload table, a finalize step
+and a sweep.)
+
+Caching: `/api/attachments/[id]` sends `Cache-Control: private, no-cache` and a
+strong `ETag` (the id — bytes never change for an id), and answers
+`If-None-Match` with 304 only **after** authorization. The browser may keep a
+copy but must ask every time, so a signed-out or removed user, or a deleted
+attachment, gets a 404 (`no-store`), never a cached 200.
+
+Deletes are uploader-or-admin/owner, mirroring comment
 moderation. `card_attachments.board_id` is denormalised like `cards.board_id`
 and `moveCardToBoard` keeps it in step; `copyCard` does not copy attachments.
 The public share path never sees attachments, and MCP's `get_card` reports
@@ -382,7 +416,8 @@ src/
                   plus the OAuth code/token prune
     api/oauth/    register (RFC 7591), token, revoke (RFC 7009)
     api/attachments/  POST upload (route handler, see Attachments);
-                  [attachmentId]/ GET — authorised, hardened image serving
+                  [attachmentId]/ GET — authorised, hardened serving with
+                  ETag revalidation
     .well-known/  oauth-authorization-server (RFC 8414),
                   oauth-protected-resource (RFC 9728)
     page.tsx      signed-out landing page
@@ -391,7 +426,10 @@ src/
     app/          shell, sidebar, dialogs
     auth/         sign-in / sign-up form
     card/         card detail (modal + standalone route); card-attachments
-                  is the image grid, upload button, paste handler and viewer
+                  is the image grid, file rows, upload button, paste handler
+                  and viewer; file-drop-zone the whole-card drop target;
+                  attachment-upload the shared uploader hook, drop-target
+                  hook and the board's max-bytes context
     public/       anonymous read-only board view
     board/        dnd-kit board: board-view, sortable-list, sortable-card,
                   list-header, add-card, add-list, board-state (pure reducer),
@@ -406,8 +444,9 @@ src/
                   mentions.ts (pure @mention resolution, no DB)
                   oauth.ts — PKCE, scopes, redirect rules, discovery metadata;
                   deliberately DB-free so it is unit-testable
-                  attachments.ts — magic-byte sniffing, size caps, filename
-                  and Content-Disposition sanitising; pure, client-safe
+                  attachments.ts — magic-byte sniffing, size caps, servedAs
+                  (inline vs download), ETag matching, filename and
+                  Content-Disposition sanitising; pure, client-safe
                   attachment-storage.ts — the one place that picks Blob or
                   Postgres for new uploads (server-only)
     core/         board-ops.ts, members.ts — the single implementation of every
@@ -419,7 +458,7 @@ src/
                   oauth.ts / oauth-cleanup.ts — the OAuth server's stateful
                   half and its housekeeping
                   attachments.ts — upload, serve, delete and board counts for
-                  card images; the list itself is read by getCardModalData
+                  card attachments; the list itself is read by getCardModalData
   skin.ts         skin list, storage keys, the no-flash inline script
   mcp/            server.ts — MCP tool definitions
   auth.ts         Auth.js, Node runtime (providers + DB)

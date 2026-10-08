@@ -12,6 +12,7 @@ import {
   AssigneeChips,
   AssigneePopover,
 } from "@/components/board/assignee-popover";
+import { useAttachmentUploader } from "@/components/card/attachment-upload";
 import { CardAttachments } from "@/components/card/card-attachments";
 import { CardChecklists } from "@/components/card/card-checklists";
 import { CardComments } from "@/components/card/card-comments";
@@ -24,6 +25,7 @@ import {
   MoveToBoardDialog,
 } from "@/components/card/card-transfer";
 import { CardWatch } from "@/components/card/card-watch";
+import { FileDropZone } from "@/components/card/file-drop-zone";
 import type { CardDetailData } from "@/components/card/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +61,14 @@ export function CardDetail({
   const [, moveAction] = useBoundAction(moveCardToListAction);
   const [, archiveAction] = useBoundAction(archiveCardAction, onClose);
 
+  // One uploader for the whole card: the button, a paste and a drop anywhere
+  // on the card all feed it, so they share one queue and one progress state.
+  const uploader = useAttachmentUploader({
+    cardId: card.id,
+    existingCount: data.attachments.length,
+    maxBytes: canWrite ? data.attachmentMaxBytes : null,
+  });
+
   const allItems = data.checklists.flatMap((c) => c.items);
   const doneCount = allItems.filter((i) => i.completed).length;
   const progress = allItems.length
@@ -67,7 +77,12 @@ export function CardDetail({
   const checklistComplete = allItems.length > 0 && doneCount === allItems.length;
 
   return (
-    <div className="flex max-h-[85vh] w-full flex-col overflow-hidden">
+    <FileDropZone
+      enabled={canWrite}
+      uploader={uploader}
+      maxBytes={data.attachmentMaxBytes}
+      className="flex max-h-[85vh] w-full flex-col overflow-hidden"
+    >
       {/* Title bar ------------------------------------------------------- */}
       <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3">
         <span className="nqm-skin-kicker text-muted-foreground flex items-center gap-2 text-xs font-medium uppercase tracking-wide">
@@ -283,9 +298,9 @@ export function CardDetail({
         />
 
         <CardAttachments
-          cardId={card.id}
           attachments={data.attachments}
           maxBytes={data.attachmentMaxBytes}
+          uploader={uploader}
           canWrite={canWrite}
         />
 
@@ -337,6 +352,6 @@ export function CardDetail({
           Updated {card.updatedLabel}
         </span>
       </div>
-    </div>
+    </FileDropZone>
   );
 }

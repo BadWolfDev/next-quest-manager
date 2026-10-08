@@ -30,13 +30,16 @@ export type CardDetailComment = {
 };
 
 /**
- * Metadata only. The image itself is fetched from `/api/attachments/<id>`,
- * which re-authorises every read; no storage URL ever reaches the client.
+ * Metadata only. The bytes are fetched from `/api/attachments/<id>`, which
+ * re-authorises every read; no storage URL ever reaches the client.
  */
 export type CardDetailAttachment = {
   id: string;
   filename: string;
+  /** Sniffed: an image type, or `application/octet-stream`. */
   contentType: string;
+  /** A sniffed raster image — thumbnail grid and viewer. Otherwise a file row. */
+  isImage: boolean;
   byteSize: number;
   createdAtIso: string;
   uploaderName: string | null;
@@ -89,7 +92,7 @@ export type CardDetailData = {
   lists: { id: string; name: string }[];
   checklists: CardDetailChecklist[];
   attachments: CardDetailAttachment[];
-  /** Per-file byte cap of the storage backend new uploads will go to. */
+  /** Per-file byte cap for new uploads. Decided on the server. */
   attachmentMaxBytes: number;
   /**
    * Other boards in the same workspace, for "Move to board…".

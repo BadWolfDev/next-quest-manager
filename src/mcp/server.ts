@@ -299,7 +299,7 @@ export function registerTools(server: McpServer) {
     {
       title: "Get card",
       description:
-        "Get one card in full: description, due date, which list it is in, its labels, checklists, assignees, watchers, comments and image attachment metadata (name, type, size — not the image itself).",
+        "Get one card in full: description, due date, which list it is in, its labels, checklists, assignees, watchers, comments and attachment metadata (name, type, size — not the file itself; type is a sniffed image type or application/octet-stream).",
       inputSchema: z.object({ card_id: uuid }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

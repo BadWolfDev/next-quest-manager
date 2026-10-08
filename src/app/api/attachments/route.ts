@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { MULTIPART_OVERHEAD_BYTES, formatBytes } from "@/lib/attachments";
-import { uploadAttachment } from "@/lib/core/attachments";
+import { MAX_UPLOAD_REQUEST_BYTES } from "@/lib/attachments";
+import { tooLargeMessage, uploadAttachment } from "@/lib/core/attachments";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -15,21 +15,27 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Upload one image to a card: `POST /api/attachments?cardId=<uuid>` with a
- * `multipart/form-data` body carrying a single `file` part.
+ * Upload one file — any type — to a card: `POST /api/attachments?cardId=<uuid>`
+ * with a `multipart/form-data` body carrying a single `file` part. The one
+ * upload path for both storage backends.
  *
  * Why a route handler and not a server action:
  *
  *  - Server actions share ONE body cap (`serverActions.bodySizeLimit`, 1 MB by
- *    default). Raising it to fit a 4 MB image would raise it for every action
+ *    default). Raising it to fit a 4.4 MB file would raise it for every action
  *    in the app — every one of which is a public endpoint. A route handler
  *    keeps the large-body allowance on this single URL.
  *  - A server action's body is parsed by the framework before our code runs.
  *    Here `uploadAttachment` authorises the caller, rate-limits them and checks
  *    the card has room *first*, and only then calls back into `readFile` — so an
  *    outsider or a viewer never makes the server buffer a few megabytes.
- *  - Content-Length is checked against the active backend's cap before the
- *    body is read, and the parsed file is checked again after.
+ *    (Which is also why `/api/attachments` is outside the `proxy.ts` matcher:
+ *    the proxy reads the whole body before any handler runs.)
+ *  - Content-Length is checked against the request-body ceiling
+ *    (`MAX_UPLOAD_REQUEST_BYTES`, Vercel's limit) before the body is read, and
+ *    the parsed file against the per-file cap after. Node reads no more than
+ *    the declared Content-Length, so a header that understates the body cannot
+ *    smuggle in more.
  *
  * Route handlers get none of the server-action CSRF protection, so the same
  * Origin-vs-Host check is done by hand below. Auth.js's SameSite=Lax session
@@ -123,8 +129,8 @@ async function readSingleFile(request: Request, maxBytes: number) {
   if (!Number.isFinite(declared) || declared <= 0) {
     throw new UploadRejectedError("Upload size unknown.", 411);
   }
-  if (declared > maxBytes + MULTIPART_OVERHEAD_BYTES) {
-    throw new UploadRejectedError(tooLarge(maxBytes), 413);
+  if (declared > MAX_UPLOAD_REQUEST_BYTES) {
+    throw new UploadRejectedError(tooLargeMessage(maxBytes), 413);
   }
 
   let form: FormData;
@@ -136,18 +142,15 @@ async function readSingleFile(request: Request, maxBytes: number) {
 
   const file = form.get("file");
   if (!(file instanceof File)) {
-    throw new UploadRejectedError("Choose an image to upload.");
+    throw new UploadRejectedError("Choose a file to upload.");
   }
   if (file.size > maxBytes) {
-    throw new UploadRejectedError(tooLarge(maxBytes), 413);
+    throw new UploadRejectedError(tooLargeMessage(maxBytes), 413);
   }
 
   return {
     filename: file.name,
+    // A view over the parsed file's buffer — no copy.
     bytes: new Uint8Array(await file.arrayBuffer()),
   };
-}
-
-function tooLarge(maxBytes: number) {
-  return `Images can be at most ${formatBytes(maxBytes)}.`;
 }

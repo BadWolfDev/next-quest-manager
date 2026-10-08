@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { uploadBackend } from "@/lib/attachment-storage";
 import { listAssignableMembersFor } from "@/lib/core/members";
 import { labelVocabularyForBoard } from "@/lib/core/board-ops";
 import { BoardMenu } from "@/components/board/board-menu";
@@ -132,6 +133,7 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
           members={members}
           labels={labels}
           canWrite={canWrite}
+          attachmentMaxBytes={canWrite ? uploadBackend().maxBytes : null}
           lists={lists.map((list) => ({
             id: list.id,
             name: list.name,

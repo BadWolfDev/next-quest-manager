@@ -25,7 +25,7 @@ export type BoardCardState = {
   labels: BoardCardLabel[];
   /** Plain-text preview of the description; see lib/excerpt.ts. */
   excerpt: string | null;
-  /** Number of image attachments; drives the paperclip badge. */
+  /** Number of attachments, images and files alike; drives the paperclip badge. */
   attachmentCount: number;
 };
 
