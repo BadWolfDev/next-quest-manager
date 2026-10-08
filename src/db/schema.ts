@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   customType,
   index,
   integer,
@@ -390,6 +391,77 @@ export const checklistItems = pgTable(
     index("checklist_items_checklist_position_idx").on(
       table.checklistId,
       table.position,
+    ),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Attachments                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where an attachment's bytes live.
+ *
+ * Recorded per row, not derived from the environment at read time: setting or
+ * unsetting `BLOB_READ_WRITE_TOKEN` later must not orphan the rows written
+ * under the other backend. Reads dispatch on this column.
+ */
+export const attachmentStorageEnum = pgEnum("attachment_storage", [
+  "postgres",
+  "blob",
+]);
+
+/** Raw bytes. postgres.js hands `bytea` back as a Buffer. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+/**
+ * An image attached to a card.
+ *
+ * The bytes are in exactly one of two places, chosen at upload time by
+ * `lib/attachment-storage.ts`: a private Vercel Blob object (`blob_pathname`)
+ * when the optional bucket is configured, or this row's own `data` column — the
+ * Postgres fallback that keeps the app runnable on nothing but `DATABASE_URL`.
+ *
+ * Hard-deleted, unlike almost everything else: see `deleteAttachment`.
+ */
+export const cardAttachments = pgTable(
+  "card_attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    cardId: uuid("card_id")
+      .notNull()
+      .references(() => cards.id, { onDelete: "cascade" }),
+    /** Denormalised like `cards.board_id`; kept in step by `moveCardToBoard`. */
+    boardId: uuid("board_id")
+      .notNull()
+      .references(() => boards.id, { onDelete: "cascade" }),
+    uploaderId: uuid("uploader_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    /** Display name only — sanitised, never used as a storage path. */
+    filename: text("filename").notNull(),
+    /** Sniffed from the magic bytes at upload, never the client's claim. */
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    storage: attachmentStorageEnum("storage").notNull(),
+    /** Set when `storage = 'blob'`. A pathname in a *private* store. */
+    blobPathname: text("blob_pathname"),
+    /** Set when `storage = 'postgres'`. Never selected by list queries. */
+    data: bytea("data"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("card_attachments_card_idx").on(table.cardId, table.createdAt),
+    index("card_attachments_board_idx").on(table.boardId),
+    index("card_attachments_uploader_idx").on(table.uploaderId),
+    check(
+      "card_attachments_storage_payload",
+      sql`(${table.storage} = 'blob' and ${table.blobPathname} is not null and ${table.data} is null)
+        or (${table.storage} = 'postgres' and ${table.data} is not null and ${table.blobPathname} is null)`,
     ),
   ],
 );
@@ -831,6 +903,15 @@ export const cardsRelations = relations(cards, ({ one, many }) => ({
   cardLabels: many(cardLabels),
   assignees: many(cardAssignees),
   watchers: many(cardWatchers),
+  attachments: many(cardAttachments),
+}));
+
+export const cardAttachmentsRelations = relations(cardAttachments, ({ one }) => ({
+  card: one(cards, { fields: [cardAttachments.cardId], references: [cards.id] }),
+  uploader: one(users, {
+    fields: [cardAttachments.uploaderId],
+    references: [users.id],
+  }),
 }));
 
 export const cardWatchersRelations = relations(cardWatchers, ({ one }) => ({
@@ -889,4 +970,7 @@ export type Card = typeof cards.$inferSelect;
 export type Label = typeof labels.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
 export type CardWatcher = typeof cardWatchers.$inferSelect;
+export type CardAttachment = typeof cardAttachments.$inferSelect;
+export type AttachmentStorage =
+  (typeof attachmentStorageEnum.enumValues)[number];
 export type Notification = typeof notifications.$inferSelect;

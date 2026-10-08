@@ -29,6 +29,9 @@ const csp = [
   ...(isDev ? [] : ["upgrade-insecure-requests"]),
 ].join("; ");
 
+/** For `/api/attachments/[id]`: show the image, nothing else, sandboxed. */
+const ATTACHMENT_CSP = "default-src 'none'; sandbox";
+
 const securityHeaders = [
   { key: "Content-Security-Policy", value: csp },
   // Redundant with frame-ancestors, kept for older browsers.
@@ -56,7 +59,22 @@ const nextConfig: NextConfig = {
   // @node-rs/argon2 is a native addon — never bundle it into the server build.
   serverExternalPackages: ["@node-rs/argon2", "postgres"],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // Served attachment bytes get a far stricter policy than the app: an
+      // image opened directly must not be able to run or load anything. This
+      // entry comes last because, for the same key, the last match wins —
+      // a CSP set inside the route handler would lose to the global one.
+      {
+        source: "/api/attachments/:attachmentId",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: ATTACHMENT_CSP,
+          },
+        ],
+      },
+    ];
   },
 };
 

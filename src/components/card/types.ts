@@ -29,6 +29,21 @@ export type CardDetailComment = {
   canModify: boolean;
 };
 
+/**
+ * Metadata only. The image itself is fetched from `/api/attachments/<id>`,
+ * which re-authorises every read; no storage URL ever reaches the client.
+ */
+export type CardDetailAttachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  byteSize: number;
+  createdAtIso: string;
+  uploaderName: string | null;
+  /** Uploader, or a workspace admin/owner — the same rule the action enforces. */
+  canDelete: boolean;
+};
+
 export type CardDetailLabel = { id: string; name: string; color: string };
 
 export type CardDetailChecklistItem = {
@@ -73,6 +88,9 @@ export type CardDetailData = {
   attachedLabelIds: string[];
   lists: { id: string; name: string }[];
   checklists: CardDetailChecklist[];
+  attachments: CardDetailAttachment[];
+  /** Per-file byte cap of the storage backend new uploads will go to. */
+  attachmentMaxBytes: number;
   /**
    * Other boards in the same workspace, for "Move to board…".
    *

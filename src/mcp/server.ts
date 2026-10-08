@@ -299,7 +299,7 @@ export function registerTools(server: McpServer) {
     {
       title: "Get card",
       description:
-        "Get one card in full: description, due date, which list it is in, its labels, checklists, assignees, watchers and comments.",
+        "Get one card in full: description, due date, which list it is in, its labels, checklists, assignees, watchers, comments and image attachment metadata (name, type, size — not the image itself).",
       inputSchema: z.object({ card_id: uuid }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -341,6 +341,15 @@ export function registerTools(server: McpServer) {
           body: c.body,
           created_at: c.createdAt.toISOString(),
           edited_at: c.editedAt?.toISOString(),
+        })),
+        // Metadata only: no bytes and no storage URL ever leave over MCP.
+        attachments: detail.attachments.map((a) => ({
+          id: a.id,
+          filename: a.filename,
+          content_type: a.contentType,
+          byte_size: a.byteSize,
+          uploaded_by: a.uploaderName ?? undefined,
+          created_at: a.createdAt.toISOString(),
         })),
       };
     }),

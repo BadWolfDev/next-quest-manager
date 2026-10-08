@@ -142,6 +142,7 @@ export default async function BoardPage({ params }: PageProps<"/b/[boardId]">) {
               assignees: card.assignees,
               labels: card.labels,
               excerpt: card.excerpt,
+              attachmentCount: card.attachmentCount,
             })),
           }))}
         />

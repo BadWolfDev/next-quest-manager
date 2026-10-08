@@ -6,7 +6,7 @@
 
 Trello-shaped boards for teams who would rather own the database than rent one.
 One `DATABASE_URL` and one `AUTH_SECRET` is the entire configuration surface: no
-Redis, no queue, no object store, no third-party auth provider.
+Redis, no queue, no required object store, no third-party auth provider.
 
 ---
 
@@ -56,6 +56,9 @@ Redis, no queue, no object store, no third-party auth provider.
   overlay
 - **Card detail** at a shareable URL — labels, description, checklists,
   assignees, move between lists
+- **Image attachments** — upload or paste PNG, JPEG, GIF and WebP images onto a
+  card. Stored in Postgres out of the box, or in a private Vercel Blob store if
+  you set `BLOB_READ_WRITE_TOKEN`. See [Image attachments](#image-attachments)
 - **Board menu** — rename a board, archive it (admin and up), or open its
   archive, from the board title
 - **Public board sharing** — a read-only link anyone can open, no account needed
@@ -381,6 +384,30 @@ and assignee first names. No account required.
 - A share token grants read access to that one board and nothing else: it cannot
   invoke any action, reach the MCP endpoint, or open the private board URL.
 
+## Image attachments
+
+Cards take image attachments — PNG, JPEG, GIF and WebP, up to 20 per card —
+from the card's **Add image** button or by pasting a screenshot while the card
+is open. The file type is decided by the bytes, not the name or the browser's
+claim, and SVG is refused outright.
+
+Where the bytes live is the one optional piece of configuration:
+
+| `BLOB_READ_WRITE_TOKEN` | Storage | Per-image limit |
+| ----------------------- | ------- | --------------- |
+| unset (default) | Postgres, in the `card_attachments` table | 2 MB |
+| set | A **private** Vercel Blob store | 4 MB |
+
+On Vercel, create a Blob store with **private** access under Storage and connect
+it to the project; Vercel adds the variable for you. Every image is served
+through `/api/attachments/<id>`, which re-checks that the viewer may read the
+card — the store's URLs never reach a browser. Attachments are not part of
+public share links or of anything an MCP client can download.
+
+Each row records which backend holds it, so turning the bucket on (or off)
+later does not strand existing images — but keep the token around as long as
+rows stored in the bucket still exist.
+
 ## Configuration
 
 | Variable | Required | Description |
@@ -390,6 +417,7 @@ and assignee first names. No account required.
 | `DATABASE_POOL_MAX` | no | Connections per process (default 10). Lower to 1–3 on serverless. |
 | `ADMIN_EMAIL` | no | With `ADMIN_PASSWORD`, runs the instance invite-only. See [Closed registration](#closed-registration-invite-only-instances). |
 | `ADMIN_PASSWORD` | no | Bootstrap password for that account. At least 10 characters. Never re-applied after creation. |
+| `BLOB_READ_WRITE_TOKEN` | no | A **private** Vercel Blob store for image attachments. Unset, images are stored in Postgres with a smaller size cap. See [Image attachments](#image-attachments). |
 | `CRON_SECRET` | no | Shared secret for `/api/cron/due-reminders`. Unset, the endpoint refuses to run (503) and due-date reminders are simply off. See [Due-date reminders](#due-date-reminders). |
 | `NQM_ALLOW_REMOTE_MIGRATE` | no | Set to `1` to allow `db:migrate` against a non-local host. A safety catch, not a feature. |
 

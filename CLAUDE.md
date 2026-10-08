@@ -25,10 +25,29 @@ project or a single Docker host with no configuration beyond `DATABASE_URL` and
 
 ## Architectural decisions
 
-**Postgres and nothing else.** No Redis, no queue, no blob store. Rate limiting
-lives in `rate_limits`, audit history in `activity_log`, in-app alerts in
-`notifications`. If a feature seems to need another service, model it as a table
-first. Adding a second required service breaks the deployment promise.
+**Postgres and nothing else is required.** No Redis, no queue, no required
+blob store. Rate limiting lives in `rate_limits`, audit history in
+`activity_log`, in-app alerts in `notifications`. If a feature seems to need
+another service, model it as a table first. Adding a second *required* service
+breaks the deployment promise.
+
+**The optional-bucket pattern.** An optional service is acceptable only when
+Postgres is a complete fallback for it, so an instance with nothing but
+`DATABASE_URL` + `AUTH_SECRET` still has the whole feature. Card image
+attachments are the one instance: with `BLOB_READ_WRITE_TOKEN` set the bytes go
+to a **private** Vercel Blob store; unset, they go in `card_attachments.data`
+(`bytea`) with a lower per-file cap. Rules that carry to any future optional
+service:
+
+- The backend choice lives in one small `server-only` module
+  (`src/lib/attachment-storage.ts`); nothing else reads the env var.
+- The choice is recorded **per row** (`card_attachments.storage`). Reads and
+  deletes dispatch on the row, never on the current environment, so flipping
+  the variable later orphans nothing.
+- Private objects are never handed to a browser. Bytes are streamed through
+  `/api/attachments/[id]` after `requireCardAccess`; the store's URL is not in
+  any payload, RSC or MCP response.
+- Required services are still forbidden.
 
 **JWT sessions, not database sessions.** Serverless functions should not read a
 session row on every request, and JWT sessions mean no sticky infrastructure.
@@ -279,6 +298,30 @@ Queries must filter `isNull(archivedAt)` unless they deliberately want archives.
 came from was archived meanwhile — restoring something into an invisible list
 is indistinguishable from the restore having failed.
 
+One deliberate exception: **attachments are hard-deleted**, row and bytes.
+Orphaned image bytes have no history value, and keeping them after someone
+asked for them gone is the opposite of what they meant; the `attachment.deleted`
+activity entry records that it existed. The row is deleted in the transaction
+and the blob object after commit — a failed object delete is logged, not
+surfaced, because nothing can reach an object without its row. Deleting a
+workspace collects its blob pathnames first and discards them after the
+cascade.
+
+**Attachments.** Images only (PNG, JPEG, GIF, WebP), identified by magic-byte
+sniffing in `lib/attachments.ts` — never the client's MIME type or the
+extension; SVG is refused because it is a script vector. Caps: 4 MB per file on
+Blob (Vercel's 4.5 MB body limit), 2 MB on the Postgres fallback, 20 per card,
+and a per-user upload rate limit. Uploads use a route handler
+(`POST /api/attachments?cardId=`), not a server action, so the large-body
+allowance stays on one URL instead of raising `serverActions.bodySizeLimit` for
+every action; `uploadAttachment` authorises, rate-limits and checks room
+*before* the body is read, and the route does the Origin check server actions
+would have done. Deletes are uploader-or-admin/owner, mirroring comment
+moderation. `card_attachments.board_id` is denormalised like `cards.board_id`
+and `moveCardToBoard` keeps it in step; `copyCard` does not copy attachments.
+The public share path never sees attachments, and MCP's `get_card` reports
+metadata only — there is no upload tool.
+
 **Watching is interest; assignment is responsibility.** `card_watchers` is a
 separate table from `card_assignees` on purpose, because the two diverge.
 Assigning and commenting auto-watch, unassigning does not unwatch.
@@ -329,7 +372,8 @@ src/
   actions/        auth.ts, boards.ts, workspaces.ts, session.ts,
                   account.ts (own profile + password), comments.ts, labels.ts,
                   archive.ts (restore card / list),
-                  oauth.ts (consent decision + connected apps)
+                  oauth.ts (consent decision + connected apps),
+                  attachments.ts (delete only; uploads use the route)
   app/
     (auth)/       /login, /signup, /oauth/authorize — centred card layout
     (app)/        authenticated shell: /app, /w/[workspaceSlug], /b/[boardId]
@@ -337,6 +381,8 @@ src/
     api/cron/     due-reminders — CRON_SECRET-authenticated due-date sweep,
                   plus the OAuth code/token prune
     api/oauth/    register (RFC 7591), token, revoke (RFC 7009)
+    api/attachments/  POST upload (route handler, see Attachments);
+                  [attachmentId]/ GET — authorised, hardened image serving
     .well-known/  oauth-authorization-server (RFC 8414),
                   oauth-protected-resource (RFC 9728)
     page.tsx      signed-out landing page
@@ -344,7 +390,8 @@ src/
     ui/           shadcn/ui primitives — regenerate, don't hand-edit
     app/          shell, sidebar, dialogs
     auth/         sign-in / sign-up form
-    card/         card detail (modal + standalone route)
+    card/         card detail (modal + standalone route); card-attachments
+                  is the image grid, upload button, paste handler and viewer
     public/       anonymous read-only board view
     board/        dnd-kit board: board-view, sortable-list, sortable-card,
                   list-header, add-card, add-list, board-state (pure reducer),
@@ -359,6 +406,10 @@ src/
                   mentions.ts (pure @mention resolution, no DB)
                   oauth.ts — PKCE, scopes, redirect rules, discovery metadata;
                   deliberately DB-free so it is unit-testable
+                  attachments.ts — magic-byte sniffing, size caps, filename
+                  and Content-Disposition sanitising; pure, client-safe
+                  attachment-storage.ts — the one place that picks Blob or
+                  Postgres for new uploads (server-only)
     core/         board-ops.ts, members.ts — the single implementation of every
                   board mutation and read, shared by server actions and MCP
                   public-board.ts — the isolated, session-free public read path
@@ -367,6 +418,8 @@ src/
                   in SQL instead of calling an authorize() helper
                   oauth.ts / oauth-cleanup.ts — the OAuth server's stateful
                   half and its housekeeping
+                  attachments.ts — upload, serve, delete and board counts for
+                  card images; the list itself is read by getCardModalData
   skin.ts         skin list, storage keys, the no-flash inline script
   mcp/            server.ts — MCP tool definitions
   auth.ts         Auth.js, Node runtime (providers + DB)
@@ -375,6 +428,7 @@ src/
 drizzle/          generated SQL migrations, committed
 vercel.json       Vercel Cron schedule for the due-date sweep
 scripts/          migrate.ts
+test/             global-setup.ts — migrates TEST_DATABASE_URL once per run
 ```
 
 ## Commands

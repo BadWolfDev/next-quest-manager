@@ -20,3 +20,18 @@ export class AuthenticationError extends Error {
     this.name = "AuthenticationError";
   }
 }
+
+/**
+ * An upload refused for a reason the uploader can act on — wrong type, too
+ * large, too many, too fast. The message is user-safe by construction; the
+ * status is what the upload route answers with.
+ */
+export class UploadRejectedError extends Error {
+  constructor(
+    message: string,
+    readonly status: 400 | 411 | 413 | 415 | 429 = 400,
+  ) {
+    super(message);
+    this.name = "UploadRejectedError";
+  }
+}

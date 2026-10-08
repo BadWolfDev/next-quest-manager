@@ -5,6 +5,7 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import { requireWorkspaceMember, WRITE_MIN_ROLE } from "@/lib/authorize";
 import { db } from "@/db";
 import { boards, lists } from "@/db/schema";
+import { uploadBackend } from "@/lib/attachment-storage";
 import { listAssignableMembersFor } from "@/lib/core/members";
 import { getCardModalData } from "@/lib/core/board-ops";
 import { safeRead } from "@/lib/safe-read";
@@ -114,6 +115,16 @@ export async function loadCardDetail(
     attachedLabelIds: data.attachedLabelIds,
     lists: data.lists,
     checklists: data.checklists,
+    attachments: data.attachments.map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      contentType: a.contentType,
+      byteSize: a.byteSize,
+      createdAtIso: a.createdAt.toISOString(),
+      uploaderName: a.uploaderName,
+      canDelete: a.canDelete,
+    })),
+    attachmentMaxBytes: uploadBackend().maxBytes,
     workspaceBoards,
     canWrite,
   };

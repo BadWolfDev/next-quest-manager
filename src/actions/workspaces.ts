@@ -9,6 +9,10 @@ import { workspaceMembers, workspaces } from "@/db/schema";
 import { toActionError, type ActionState } from "@/lib/action-result";
 import { recordActivity } from "@/lib/activity";
 import { requireUser, requireWorkspaceMember } from "@/lib/authorize";
+import {
+  blobPathnamesForWorkspace,
+  discardBlobObjects,
+} from "@/lib/core/attachments";
 import { redirect } from "next/navigation";
 import { ACCENTS } from "@/lib/palette";
 import { slugify, uuidSchema, workspaceNameSchema } from "@/lib/validation";
@@ -168,7 +172,13 @@ export async function deleteWorkspaceAction(
       };
     }
 
+    // The cascade removes attachment rows, but the blob store knows nothing
+    // about foreign keys: collect the objects first, discard them after.
+    const blobPathnames = await blobPathnamesForWorkspace(input.workspaceId);
+
     await db.delete(workspaces).where(eq(workspaces.id, input.workspaceId));
+
+    await discardBlobObjects(blobPathnames, "workspace-delete");
   } catch (error) {
     return toActionError(error);
   }
