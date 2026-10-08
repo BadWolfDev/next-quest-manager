@@ -17,6 +17,7 @@ function card(id: string): BoardCardState {
     assignees: [],
     labels: [],
     excerpt: null,
+    attachmentCount: 0,
   };
 }
 

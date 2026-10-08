@@ -50,6 +50,13 @@
       "when": 1789919392437,
       "tag": "0006_oauth_server",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791477287620,
+      "tag": "0007_card_attachments",
+      "breakpoints": true
     }
   ]
 }

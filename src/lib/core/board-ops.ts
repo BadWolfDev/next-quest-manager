@@ -19,6 +19,7 @@ import { db } from "@/db";
 import {
   boards,
   cardAssignees,
+  cardAttachments,
   cardLabels,
   cardWatchers,
   cards,
@@ -39,6 +40,7 @@ import {
   requireUser,
   requireWorkspaceMember,
   READ_MIN_ROLE,
+  roleSatisfies,
   type Actor,
 } from "@/lib/authorize";
 import { AuthorizationError } from "@/lib/errors";
@@ -63,11 +65,11 @@ export type OpContext = {
   source?: MutationSource;
 };
 
-function sourceData(source: MutationSource | undefined) {
+export function sourceData(source: MutationSource | undefined) {
   return source && source !== "ui" ? { source } : {};
 }
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Bump a board's `updated_at`.
@@ -78,7 +80,7 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
  * their next poll. Board metadata edits (rename, archive) set updatedAt
  * directly and do not need it.
  */
-async function touchBoard(tx: Tx, boardId: string) {
+export async function touchBoard(tx: Tx, boardId: string) {
   await tx
     .update(boards)
     .set({ updatedAt: new Date() })
@@ -912,6 +914,13 @@ export async function moveCardToBoard(
       })
       .where(eq(cards.id, input.cardId));
 
+    // `card_attachments.board_id` is denormalised like `cards.board_id`, and
+    // has to follow the card or the board-scoped badge count would drift.
+    await tx
+      .update(cardAttachments)
+      .set({ boardId: to.board.id })
+      .where(eq(cardAttachments.cardId, input.cardId));
+
     // Labels are board-scoped: drop every attachment that does not exist on
     // the destination board. A same-board move leaves them all in place.
     const keepLabelIds = (
@@ -1012,6 +1021,9 @@ export async function moveCardToBoard(
  * Comments and assignees are not copied: a comment is a statement someone made
  * at a point in time and duplicating it puts words in their mouth, and an
  * assignment is a commitment that has to be made again.
+ * Attachments are not copied either: duplicating the bytes would double
+ * storage silently, and sharing them would make deleting one card's image
+ * reach into another's.
  */
 export async function copyCard(
   input: { cardId: string; targetListId: string; title?: string },
@@ -2290,31 +2302,48 @@ export async function moveChecklistItem(
 export async function getCardModalData(cardId: string, actor?: Actor) {
   const detail = await getCardDetail(cardId, actor);
 
-  const [boardLabels, attached, lists_, checklistRows] = await Promise.all([
-    db
-      .select({ id: labels.id, name: labels.name, color: labels.color })
-      .from(labels)
-      .where(eq(labels.boardId, detail.board.id))
-      .orderBy(asc(labels.createdAt)),
-    db
-      .select({ labelId: cardLabels.labelId })
-      .from(cardLabels)
-      .where(eq(cardLabels.cardId, cardId)),
-    db
-      .select({ id: lists.id, name: lists.name })
-      .from(lists)
-      .where(and(eq(lists.boardId, detail.board.id), isNull(lists.archivedAt)))
-      .orderBy(asc(lists.position)),
-    db
-      .select({
-        id: checklists.id,
-        title: checklists.title,
-        position: checklists.position,
-      })
-      .from(checklists)
-      .where(eq(checklists.cardId, cardId))
-      .orderBy(asc(checklists.position)),
-  ]);
+  const [boardLabels, attached, lists_, checklistRows, attachmentRows] =
+    await Promise.all([
+      db
+        .select({ id: labels.id, name: labels.name, color: labels.color })
+        .from(labels)
+        .where(eq(labels.boardId, detail.board.id))
+        .orderBy(asc(labels.createdAt)),
+      db
+        .select({ labelId: cardLabels.labelId })
+        .from(cardLabels)
+        .where(eq(cardLabels.cardId, cardId)),
+      db
+        .select({ id: lists.id, name: lists.name })
+        .from(lists)
+        .where(and(eq(lists.boardId, detail.board.id), isNull(lists.archivedAt)))
+        .orderBy(asc(lists.position)),
+      db
+        .select({
+          id: checklists.id,
+          title: checklists.title,
+          position: checklists.position,
+        })
+        .from(checklists)
+        .where(eq(checklists.cardId, cardId))
+        .orderBy(asc(checklists.position)),
+      // Metadata only — `data` (the Postgres-fallback bytes) and the private
+      // blob pathname are never selected here.
+      db
+        .select({
+          id: cardAttachments.id,
+          filename: cardAttachments.filename,
+          contentType: cardAttachments.contentType,
+          byteSize: cardAttachments.byteSize,
+          createdAt: cardAttachments.createdAt,
+          uploaderId: cardAttachments.uploaderId,
+          uploaderName: users.name,
+        })
+        .from(cardAttachments)
+        .leftJoin(users, eq(users.id, cardAttachments.uploaderId))
+        .where(eq(cardAttachments.cardId, cardId))
+        .orderBy(asc(cardAttachments.createdAt)),
+    ]);
 
   const items = checklistRows.length
     ? await db
@@ -2347,6 +2376,16 @@ export async function getCardModalData(cardId: string, actor?: Actor) {
       id: c.id,
       title: c.title,
       items: byChecklist.get(c.id) ?? [],
+    })),
+    attachments: attachmentRows.map((a) => ({
+      ...a,
+      // Same rule `deleteAttachment` enforces: the write floor, then
+      // uploader-or-moderator.
+      canDelete:
+        roleSatisfies(detail.role, "member") &&
+        ((a.uploaderId !== null && a.uploaderId === detail.user.id) ||
+          detail.role === "admin" ||
+          detail.role === "owner"),
     })),
   };
 }

@@ -11,8 +11,10 @@ import {
   workspaceMembers,
   workspaces,
 } from "@/db/schema";
+import { attachmentCountsForBoard } from "@/lib/core/attachments";
 import { assigneesForBoard, labelsForBoard } from "@/lib/core/board-ops";
 import { toPlainExcerpt } from "@/lib/excerpt";
+import { safeRead } from "@/lib/safe-read";
 import {
   requireBoardAccess,
   requireUser,
@@ -163,6 +165,8 @@ export type BoardList = {
      * payload. See lib/excerpt.ts.
      */
     excerpt: string | null;
+    /** Image attachments on the card, for the paperclip badge. */
+    attachmentCount: number;
   }[];
 };
 
@@ -199,9 +203,15 @@ export async function getBoardPage(boardId: string) {
       .orderBy(asc(cards.position)),
   ]);
 
-  const [assignees, cardLabelsByCard] = await Promise.all([
+  const [assignees, cardLabelsByCard, attachmentCounts] = await Promise.all([
     assigneesForBoard(ctx.board.id),
     labelsForBoard(ctx.board.id),
+    // Decorative: a failed count drops the badge, never the board.
+    safeRead(
+      "board:attachment-counts",
+      () => attachmentCountsForBoard(ctx.board.id),
+      new Map<string, number>(),
+    ),
   ]);
 
   const byList = new Map<string, BoardList["cards"]>();
@@ -216,6 +226,7 @@ export async function getBoardPage(boardId: string) {
       labels: cardLabelsByCard.get(card.id) ?? [],
       // Truncated here so the full description never leaves the server.
       excerpt: toPlainExcerpt(card.description),
+      attachmentCount: attachmentCounts.get(card.id) ?? 0,
     });
     byList.set(card.listId, bucket);
   }

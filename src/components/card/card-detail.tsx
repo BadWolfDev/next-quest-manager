@@ -12,6 +12,7 @@ import {
   AssigneeChips,
   AssigneePopover,
 } from "@/components/board/assignee-popover";
+import { CardAttachments } from "@/components/card/card-attachments";
 import { CardChecklists } from "@/components/card/card-checklists";
 import { CardComments } from "@/components/card/card-comments";
 import { CardDescription } from "@/components/card/card-description";
@@ -278,6 +279,13 @@ export function CardDetail({
           cardId={card.id}
           boardId={board.id}
           checklists={data.checklists}
+          canWrite={canWrite}
+        />
+
+        <CardAttachments
+          cardId={card.id}
+          attachments={data.attachments}
+          maxBytes={data.attachmentMaxBytes}
           canWrite={canWrite}
         />
 

@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Paperclip } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
 
@@ -98,7 +98,21 @@ export function CardBody({
         </span>
       ) : null}
 
-      {card.dueDate ? <DueBadge due={card.dueDate} /> : null}
+      {card.dueDate || card.attachmentCount > 0 ? (
+        <span className="flex flex-wrap items-center gap-x-2">
+          {card.dueDate ? <DueBadge due={card.dueDate} /> : null}
+          {card.attachmentCount > 0 ? (
+            <span
+              className="text-muted-foreground mt-1.5 inline-flex items-center gap-1 text-xs tabular-nums"
+              aria-label={`${card.attachmentCount} attachment${card.attachmentCount === 1 ? "" : "s"}`}
+              title={`${card.attachmentCount} attachment${card.attachmentCount === 1 ? "" : "s"}`}
+            >
+              <Paperclip aria-hidden="true" className="size-3.5" />
+              {card.attachmentCount}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
 
       {card.assignees.length > 0 || (canWrite && !overlay) ? (
         <span className="mt-2 flex items-center justify-between gap-2">

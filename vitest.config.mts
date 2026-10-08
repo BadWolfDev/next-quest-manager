@@ -15,6 +15,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // Migrates TEST_DATABASE_URL once, so parallel Postgres test files do not
+    // race each other on a fresh database.
+    globalSetup: ["./test/global-setup.ts"],
     // The Postgres integration tests migrate a database in `beforeAll`.
     hookTimeout: 60_000,
     testTimeout: 30_000,

@@ -20,6 +20,7 @@ function card(over: Partial<BoardCardState> = {}): BoardCardState {
     assignees: [],
     labels: [],
     excerpt: null,
+    attachmentCount: 0,
     ...over,
   };
 }
