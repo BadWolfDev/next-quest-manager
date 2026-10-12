@@ -270,7 +270,7 @@ claude mcp add --transport http nqm https://<your-host>/api/mcp \
 | Lists | `create_list`, `rename_list`, `archive_list`, `restore_list` |
 | Cards | `create_card`, `update_card`, `move_card`, `move_card_to_board`, `copy_card`, `archive_card`, `restore_card`, `assign_card`, `unassign_card`, `watch_card`, `unwatch_card` |
 | Labels | `create_label`, `update_label`, `delete_label`, `set_card_label` |
-| Checklists | `add_checklist`, `add_checklist_item`, `toggle_checklist_item`, `delete_checklist_item` |
+| Checklists | `add_checklist`, `rename_checklist`, `delete_checklist`, `add_checklist_item`, `toggle_checklist_item`, `delete_checklist_item` |
 | Comments | `add_comment`, `update_comment`, `delete_comment` |
 
 Read-only tools carry `readOnlyHint` and the archiving and deleting ones carry

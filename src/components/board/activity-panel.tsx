@@ -53,6 +53,14 @@ function sentence(entry: ActivityEntry): string {
       return `${who} assigned “${d.title ?? "a card"}”`;
     case "card.unassigned":
       return `${who} removed an assignee`;
+    case "checklist.renamed":
+      return `${who} renamed the checklist “${d.from}” to “${d.to}”`;
+    case "checklist.deleted": {
+      const n = Number(d.itemCount ?? 0);
+      const items =
+        n === 0 ? "no items" : n === 1 ? "1 item" : `${n} items`;
+      return `${who} deleted the checklist “${d.title ?? "Checklist"}” (${items})`;
+    }
     case "comment.created":
       return `${who} commented on a card`;
     case "attachment.added":

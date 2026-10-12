@@ -19,14 +19,16 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useOptimistic, useState, useTransition } from "react";
+import { useOptimistic, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import {
   addChecklistItemAction,
   createChecklistAction,
+  deleteChecklistAction,
   deleteChecklistItemAction,
   moveChecklistItemAction,
+  renameChecklistAction,
   toggleChecklistItemAction,
 } from "@/actions/card-detail";
 import { useBoundAction, useQuickAction } from "@/components/card/card-hooks";
@@ -35,7 +37,18 @@ import type {
   CardDetailChecklistItem,
 } from "@/components/card/types";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { idleState } from "@/lib/action-result";
 import { cn } from "@/lib/utils";
 
 type Reorder = { activeId: string; overId: string };
@@ -136,14 +149,170 @@ function SortableItem({
   );
 }
 
+/**
+ * A checklist's title, renamed in place — the same click-to-edit behaviour as
+ * a list header. Enter or blur saves, Escape cancels, and an empty or
+ * unchanged title is treated as a cancel rather than a request.
+ *
+ * The new title shows optimistically; if the action fails the transition ends
+ * without a refresh, React drops the overlay and the old title comes back.
+ */
+function ChecklistTitle({
+  title,
+  canWrite,
+  onTitleChange,
+}: {
+  title: string;
+  canWrite: boolean;
+  onTitleChange: (title: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  // Enter unmounts the input, which may also fire blur — commit only once.
+  const settledRef = useRef(false);
+  // A keyboard finish hands focus back to the title rather than to <body>.
+  const refocusRef = useRef(false);
+
+  function startEditing() {
+    settledRef.current = false;
+    setEditing(true);
+  }
+
+  function finish(raw: string | null, fromKeyboard = false) {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    refocusRef.current = fromKeyboard;
+    setEditing(false);
+
+    const next = raw?.trim() ?? "";
+    if (!next || next === title) return;
+    onTitleChange(next);
+  }
+
+  if (!canWrite) {
+    return <p className="truncate text-sm font-medium">{title}</p>;
+  }
+
+  if (editing) {
+    return (
+      <Input
+        defaultValue={title}
+        autoFocus
+        maxLength={80}
+        autoComplete="off"
+        aria-label="Checklist name"
+        data-escape-cancels=""
+        className="bg-card h-8 max-w-sm text-sm font-medium"
+        onFocus={(event) => event.currentTarget.select()}
+        onBlur={(event) => finish(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            finish(event.currentTarget.value, true);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            finish(null, true);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      ref={(node) => {
+        if (node && refocusRef.current) {
+          refocusRef.current = false;
+          node.focus();
+        }
+      }}
+      type="button"
+      onClick={startEditing}
+      aria-label={`Rename checklist ${title}`}
+      title="Click to rename"
+      className="hover:bg-accent/60 focus-visible:ring-ring/60 -mx-1 block max-w-full truncate rounded px-1 py-0.5 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
+    >
+      {title}
+    </button>
+  );
+}
+
+/**
+ * The delete control on a checklist header, and the confirm dialog it opens.
+ *
+ * The dialog nests inside the card modal; Radix dismisses only the topmost
+ * layer on Escape, so Escape here closes the confirm and leaves the card open.
+ * Cancel is first in the DOM, so it — not Delete — takes initial focus.
+ */
+function DeleteChecklistButton({
+  title,
+  itemCount,
+  onConfirm,
+}: {
+  title: string;
+  itemCount: number;
+  onConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const items =
+    itemCount === 0
+      ? "It has no items."
+      : itemCount === 1
+        ? "Its 1 item will be deleted with it."
+        : `Its ${itemCount} items will be deleted with it.`;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Delete checklist ${title}`}
+          title="Delete checklist"
+          className="text-muted-foreground hover:text-destructive focus-visible:ring-ring/60 shrink-0 rounded p-1 focus-visible:outline-none focus-visible:ring-2"
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="nqm-skin-modal" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Delete checklist?</DialogTitle>
+          <DialogDescription>
+            “{title}” will be deleted for everyone. {items} This can’t be
+            undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline" size="sm">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              setOpen(false);
+              onConfirm();
+            }}
+          >
+            Delete checklist
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ChecklistBlock({
   checklist,
   boardId,
   canWrite,
+  onDelete,
 }: {
   checklist: CardDetailChecklist;
   boardId: string;
   canWrite: boolean;
+  onDelete: () => void;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -151,6 +320,7 @@ function ChecklistBlock({
   // ends without a refresh and React discards the overlay, which is the
   // rollback.
   const [items, applyReorder] = useOptimistic(checklist.items, reorder);
+  const [title, setOptimisticTitle] = useOptimistic(checklist.title);
   // Remount the composer after a successful add so the input empties.
   const [itemKey, setItemKey] = useState(0);
   const [, addAction] = useBoundAction(addChecklistItemAction, () =>
@@ -195,9 +365,43 @@ function ChecklistBlock({
     });
   }
 
+  function rename(next: string) {
+    startTransition(async () => {
+      setOptimisticTitle(next);
+      const fd = new FormData();
+      fd.set("checklistId", checklist.id);
+      fd.set("title", next);
+      const result = await renameChecklistAction(idleState, fd);
+      if (!result.ok) {
+        toast.error(
+          result.fields?.title ??
+            result.message ??
+            "Couldn't rename that checklist.",
+        );
+        return;
+      }
+      router.refresh();
+    });
+  }
+
   return (
     <div className="mb-5">
-      <p className="mb-2 text-sm font-medium">{checklist.title}</p>
+      <div className="mb-2 flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <ChecklistTitle
+            title={title}
+            canWrite={canWrite}
+            onTitleChange={rename}
+          />
+        </div>
+        {canWrite ? (
+          <DeleteChecklistButton
+            title={title}
+            itemCount={items.length}
+            onConfirm={onDelete}
+          />
+        ) : null}
+      </div>
 
       <DndContext
         sensors={sensors}
@@ -226,7 +430,7 @@ function ChecklistBlock({
           <input type="hidden" name="checklistId" value={checklist.id} />
           <input type="hidden" name="boardId" value={boardId} />
           <label htmlFor={`add-item-${checklist.id}`} className="sr-only">
-            Add an item to {checklist.title}
+            Add an item to {title}
           </label>
           <Input
             id={`add-item-${checklist.id}`}
@@ -257,7 +461,29 @@ export function CardChecklists({
   checklists: CardDetailChecklist[];
   canWrite: boolean;
 }) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [, createAction] = useBoundAction(createChecklistAction);
+  // A deleted checklist disappears at once; if the action fails the
+  // transition ends without a refresh and React restores it.
+  const [visible, removeChecklist] = useOptimistic(
+    checklists,
+    (current, removedId: string) => current.filter((c) => c.id !== removedId),
+  );
+
+  function deleteChecklist(checklistId: string) {
+    startTransition(async () => {
+      removeChecklist(checklistId);
+      const fd = new FormData();
+      fd.set("checklistId", checklistId);
+      const result = await deleteChecklistAction(idleState, fd);
+      if (!result.ok) {
+        toast.error(result.message ?? "Couldn't delete that checklist.");
+        return;
+      }
+      router.refresh();
+    });
+  }
 
   return (
     <section className="mt-7">
@@ -265,7 +491,7 @@ export function CardChecklists({
         Checklist
       </h2>
 
-      {checklists.length === 0 ? (
+      {visible.length === 0 ? (
         canWrite ? (
           <form action={createAction} className="flex gap-2">
             <input type="hidden" name="cardId" value={cardId} />
@@ -291,12 +517,13 @@ export function CardChecklists({
           <p className="text-muted-foreground text-sm">No checklist.</p>
         )
       ) : (
-        checklists.map((checklist) => (
+        visible.map((checklist) => (
           <ChecklistBlock
             key={checklist.id}
             checklist={checklist}
             boardId={boardId}
             canWrite={canWrite}
+            onDelete={() => deleteChecklist(checklist.id)}
           />
         ))
       )}

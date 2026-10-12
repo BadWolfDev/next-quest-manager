@@ -2078,6 +2078,129 @@ async function authorizeChecklist(checklistId: string, actor?: Actor) {
   return { ctx, cardId: row.cardId };
 }
 
+/**
+ * Rename a checklist. An unchanged title is a no-op — no activity row and no
+ * board touch — so saving an untouched inline editor costs nothing and leaves
+ * nothing in the history.
+ */
+export async function renameChecklist(
+  input: { checklistId: string; title: string },
+  { actor, source }: OpContext = {},
+): Promise<{ boardId: string; changed: boolean }> {
+  const { ctx, cardId } = await authorizeChecklist(input.checklistId, actor);
+
+  const changed = await db.transaction(async (tx) => {
+    // Re-read inside the transaction, pinned to the authorised card, so the
+    // recorded "from" is the title this rename actually replaced.
+    const [previous] = await tx
+      .select({ title: checklists.title })
+      .from(checklists)
+      .where(
+        and(
+          eq(checklists.id, input.checklistId),
+          eq(checklists.cardId, cardId),
+        ),
+      )
+      .limit(1);
+
+    if (!previous) throw new AuthorizationError();
+    if (previous.title === input.title) return false;
+
+    await tx
+      .update(checklists)
+      .set({ title: input.title })
+      .where(
+        and(
+          eq(checklists.id, input.checklistId),
+          eq(checklists.cardId, cardId),
+        ),
+      );
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId,
+      actorId: ctx.user.id,
+      type: "checklist.renamed",
+      data: {
+        checklistId: input.checklistId,
+        from: previous.title,
+        to: input.title,
+        ...sourceData(source),
+      },
+    });
+
+    return true;
+  });
+
+  return { boardId: ctx.board.id, changed };
+}
+
+/**
+ * Delete a checklist and, through the `checklist_items` FK cascade, its items.
+ *
+ * A hard delete, like `deleteChecklistItem`: checklists have no `archived_at`
+ * and an item carries no history of its own. The activity row keeps the title
+ * and how many items went with it, so the feed still says what existed.
+ */
+export async function deleteChecklist(
+  input: { checklistId: string },
+  { actor, source }: OpContext = {},
+): Promise<{ boardId: string; itemCount: number }> {
+  const { ctx, cardId } = await authorizeChecklist(input.checklistId, actor);
+
+  const itemCount = await db.transaction(async (tx) => {
+    // Re-read inside the transaction, pinned to the authorised card, so the
+    // recorded title and count are what this delete actually removed.
+    const [checklist] = await tx
+      .select({ title: checklists.title })
+      .from(checklists)
+      .where(
+        and(
+          eq(checklists.id, input.checklistId),
+          eq(checklists.cardId, cardId),
+        ),
+      )
+      .limit(1);
+
+    if (!checklist) throw new AuthorizationError();
+
+    const items = await tx
+      .select({ id: checklistItems.id })
+      .from(checklistItems)
+      .where(eq(checklistItems.checklistId, input.checklistId));
+
+    await tx
+      .delete(checklists)
+      .where(
+        and(
+          eq(checklists.id, input.checklistId),
+          eq(checklists.cardId, cardId),
+        ),
+      );
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId,
+      actorId: ctx.user.id,
+      type: "checklist.deleted",
+      data: {
+        checklistId: input.checklistId,
+        title: checklist.title,
+        itemCount: items.length,
+        ...sourceData(source),
+      },
+    });
+
+    return items.length;
+  });
+
+  return { boardId: ctx.board.id, itemCount };
+}
+
 export async function addChecklistItem(
   input: { checklistId: string; content: string },
   { actor, source }: OpContext = {},
