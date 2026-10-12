@@ -10,6 +10,7 @@ import {
   copyCard,
   createChecklist,
   createLabel,
+  deleteChecklist,
   deleteChecklistItem,
   moveCard,
   moveCardToBoard,
@@ -277,6 +278,24 @@ export async function renameChecklistAction(
       });
 
     const { boardId } = await renameChecklist(input, { source: "ui" });
+    revalidatePath(boardPath(boardId));
+    return { ok: true };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+/** Delete a checklist and its items, after the card detail's confirm dialog. */
+export async function deleteChecklistAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const input = z
+      .object({ checklistId: uuidSchema })
+      .parse({ checklistId: formData.get("checklistId") });
+
+    const { boardId } = await deleteChecklist(input, { source: "ui" });
     revalidatePath(boardPath(boardId));
     return { ok: true };
   } catch (error) {

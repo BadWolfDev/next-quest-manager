@@ -2137,6 +2137,70 @@ export async function renameChecklist(
   return { boardId: ctx.board.id, changed };
 }
 
+/**
+ * Delete a checklist and, through the `checklist_items` FK cascade, its items.
+ *
+ * A hard delete, like `deleteChecklistItem`: checklists have no `archived_at`
+ * and an item carries no history of its own. The activity row keeps the title
+ * and how many items went with it, so the feed still says what existed.
+ */
+export async function deleteChecklist(
+  input: { checklistId: string },
+  { actor, source }: OpContext = {},
+): Promise<{ boardId: string; itemCount: number }> {
+  const { ctx, cardId } = await authorizeChecklist(input.checklistId, actor);
+
+  const itemCount = await db.transaction(async (tx) => {
+    // Re-read inside the transaction, pinned to the authorised card, so the
+    // recorded title and count are what this delete actually removed.
+    const [checklist] = await tx
+      .select({ title: checklists.title })
+      .from(checklists)
+      .where(
+        and(
+          eq(checklists.id, input.checklistId),
+          eq(checklists.cardId, cardId),
+        ),
+      )
+      .limit(1);
+
+    if (!checklist) throw new AuthorizationError();
+
+    const items = await tx
+      .select({ id: checklistItems.id })
+      .from(checklistItems)
+      .where(eq(checklistItems.checklistId, input.checklistId));
+
+    await tx
+      .delete(checklists)
+      .where(
+        and(
+          eq(checklists.id, input.checklistId),
+          eq(checklists.cardId, cardId),
+        ),
+      );
+
+    await touchBoard(tx, ctx.board.id);
+    await recordActivity(tx, {
+      workspaceId: ctx.workspace.id,
+      boardId: ctx.board.id,
+      cardId,
+      actorId: ctx.user.id,
+      type: "checklist.deleted",
+      data: {
+        checklistId: input.checklistId,
+        title: checklist.title,
+        itemCount: items.length,
+        ...sourceData(source),
+      },
+    });
+
+    return items.length;
+  });
+
+  return { boardId: ctx.board.id, itemCount };
+}
+
 export async function addChecklistItem(
   input: { checklistId: string; content: string },
   { actor, source }: OpContext = {},

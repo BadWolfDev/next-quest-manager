@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import {
   addChecklistItemAction,
   createChecklistAction,
+  deleteChecklistAction,
   deleteChecklistItemAction,
   moveChecklistItemAction,
   renameChecklistAction,
@@ -36,6 +37,16 @@ import type {
   CardDetailChecklistItem,
 } from "@/components/card/types";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { idleState } from "@/lib/action-result";
 import { cn } from "@/lib/utils";
@@ -178,7 +189,7 @@ function ChecklistTitle({
   }
 
   if (!canWrite) {
-    return <p className="mb-2 text-sm font-medium">{title}</p>;
+    return <p className="truncate text-sm font-medium">{title}</p>;
   }
 
   if (editing) {
@@ -190,7 +201,7 @@ function ChecklistTitle({
         autoComplete="off"
         aria-label="Checklist name"
         data-escape-cancels=""
-        className="bg-card mb-2 h-8 max-w-sm text-sm font-medium"
+        className="bg-card h-8 max-w-sm text-sm font-medium"
         onFocus={(event) => event.currentTarget.select()}
         onBlur={(event) => finish(event.currentTarget.value)}
         onKeyDown={(event) => {
@@ -218,10 +229,77 @@ function ChecklistTitle({
       onClick={startEditing}
       aria-label={`Rename checklist ${title}`}
       title="Click to rename"
-      className="hover:bg-accent/60 focus-visible:ring-ring/60 -mx-1 mb-2 block max-w-full truncate rounded px-1 py-0.5 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
+      className="hover:bg-accent/60 focus-visible:ring-ring/60 -mx-1 block max-w-full truncate rounded px-1 py-0.5 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
     >
       {title}
     </button>
+  );
+}
+
+/**
+ * The delete control on a checklist header, and the confirm dialog it opens.
+ *
+ * The dialog nests inside the card modal; Radix dismisses only the topmost
+ * layer on Escape, so Escape here closes the confirm and leaves the card open.
+ * Cancel is first in the DOM, so it — not Delete — takes initial focus.
+ */
+function DeleteChecklistButton({
+  title,
+  itemCount,
+  onConfirm,
+}: {
+  title: string;
+  itemCount: number;
+  onConfirm: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const items =
+    itemCount === 0
+      ? "It has no items."
+      : itemCount === 1
+        ? "Its 1 item will be deleted with it."
+        : `Its ${itemCount} items will be deleted with it.`;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Delete checklist ${title}`}
+          title="Delete checklist"
+          className="text-muted-foreground hover:text-destructive focus-visible:ring-ring/60 shrink-0 rounded p-1 focus-visible:outline-none focus-visible:ring-2"
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="nqm-skin-modal" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Delete checklist?</DialogTitle>
+          <DialogDescription>
+            “{title}” will be deleted for everyone. {items} This can’t be
+            undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="outline" size="sm">
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              setOpen(false);
+              onConfirm();
+            }}
+          >
+            Delete checklist
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -229,10 +307,12 @@ function ChecklistBlock({
   checklist,
   boardId,
   canWrite,
+  onDelete,
 }: {
   checklist: CardDetailChecklist;
   boardId: string;
   canWrite: boolean;
+  onDelete: () => void;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -306,11 +386,22 @@ function ChecklistBlock({
 
   return (
     <div className="mb-5">
-      <ChecklistTitle
-        title={title}
-        canWrite={canWrite}
-        onTitleChange={rename}
-      />
+      <div className="mb-2 flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <ChecklistTitle
+            title={title}
+            canWrite={canWrite}
+            onTitleChange={rename}
+          />
+        </div>
+        {canWrite ? (
+          <DeleteChecklistButton
+            title={title}
+            itemCount={items.length}
+            onConfirm={onDelete}
+          />
+        ) : null}
+      </div>
 
       <DndContext
         sensors={sensors}
@@ -370,7 +461,29 @@ export function CardChecklists({
   checklists: CardDetailChecklist[];
   canWrite: boolean;
 }) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [, createAction] = useBoundAction(createChecklistAction);
+  // A deleted checklist disappears at once; if the action fails the
+  // transition ends without a refresh and React restores it.
+  const [visible, removeChecklist] = useOptimistic(
+    checklists,
+    (current, removedId: string) => current.filter((c) => c.id !== removedId),
+  );
+
+  function deleteChecklist(checklistId: string) {
+    startTransition(async () => {
+      removeChecklist(checklistId);
+      const fd = new FormData();
+      fd.set("checklistId", checklistId);
+      const result = await deleteChecklistAction(idleState, fd);
+      if (!result.ok) {
+        toast.error(result.message ?? "Couldn't delete that checklist.");
+        return;
+      }
+      router.refresh();
+    });
+  }
 
   return (
     <section className="mt-7">
@@ -378,7 +491,7 @@ export function CardChecklists({
         Checklist
       </h2>
 
-      {checklists.length === 0 ? (
+      {visible.length === 0 ? (
         canWrite ? (
           <form action={createAction} className="flex gap-2">
             <input type="hidden" name="cardId" value={cardId} />
@@ -404,12 +517,13 @@ export function CardChecklists({
           <p className="text-muted-foreground text-sm">No checklist.</p>
         )
       ) : (
-        checklists.map((checklist) => (
+        visible.map((checklist) => (
           <ChecklistBlock
             key={checklist.id}
             checklist={checklist}
             boardId={boardId}
             canWrite={canWrite}
+            onDelete={() => deleteChecklist(checklist.id)}
           />
         ))
       )}

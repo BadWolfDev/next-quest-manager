@@ -18,6 +18,7 @@ import {
   createChecklist,
   createLabel,
   createList,
+  deleteChecklist,
   deleteChecklistItem,
   deleteComment,
   deleteLabel,
@@ -979,6 +980,25 @@ export function registerTools(server: McpServer) {
       const opts = { actor, source: "mcp" as const };
       await renameChecklist({ checklistId: checklist_id, title }, opts);
       return { checklist_id, title };
+    }),
+  );
+
+  server.registerTool(
+    "delete_checklist",
+    {
+      title: "Delete checklist",
+      description:
+        "Delete a checklist and every item in it. This cannot be undone. Get checklist ids from get_card.",
+      inputSchema: z.object({ checklist_id: uuid }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    },
+    mutating(async ({ checklist_id }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      const { itemCount } = await deleteChecklist(
+        { checklistId: checklist_id },
+        opts,
+      );
+      return { checklist_id, deleted: true, items_deleted: itemCount };
     }),
   );
 
