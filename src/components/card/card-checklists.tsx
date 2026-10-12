@@ -19,7 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useOptimistic, useState, useTransition } from "react";
+import { useOptimistic, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import {
@@ -27,6 +27,7 @@ import {
   createChecklistAction,
   deleteChecklistItemAction,
   moveChecklistItemAction,
+  renameChecklistAction,
   toggleChecklistItemAction,
 } from "@/actions/card-detail";
 import { useBoundAction, useQuickAction } from "@/components/card/card-hooks";
@@ -36,6 +37,7 @@ import type {
 } from "@/components/card/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { idleState } from "@/lib/action-result";
 import { cn } from "@/lib/utils";
 
 type Reorder = { activeId: string; overId: string };
@@ -136,6 +138,93 @@ function SortableItem({
   );
 }
 
+/**
+ * A checklist's title, renamed in place — the same click-to-edit behaviour as
+ * a list header. Enter or blur saves, Escape cancels, and an empty or
+ * unchanged title is treated as a cancel rather than a request.
+ *
+ * The new title shows optimistically; if the action fails the transition ends
+ * without a refresh, React drops the overlay and the old title comes back.
+ */
+function ChecklistTitle({
+  title,
+  canWrite,
+  onTitleChange,
+}: {
+  title: string;
+  canWrite: boolean;
+  onTitleChange: (title: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  // Enter unmounts the input, which may also fire blur — commit only once.
+  const settledRef = useRef(false);
+  // A keyboard finish hands focus back to the title rather than to <body>.
+  const refocusRef = useRef(false);
+
+  function startEditing() {
+    settledRef.current = false;
+    setEditing(true);
+  }
+
+  function finish(raw: string | null, fromKeyboard = false) {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    refocusRef.current = fromKeyboard;
+    setEditing(false);
+
+    const next = raw?.trim() ?? "";
+    if (!next || next === title) return;
+    onTitleChange(next);
+  }
+
+  if (!canWrite) {
+    return <p className="mb-2 text-sm font-medium">{title}</p>;
+  }
+
+  if (editing) {
+    return (
+      <Input
+        defaultValue={title}
+        autoFocus
+        maxLength={80}
+        autoComplete="off"
+        aria-label="Checklist name"
+        data-escape-cancels=""
+        className="bg-card mb-2 h-8 max-w-sm text-sm font-medium"
+        onFocus={(event) => event.currentTarget.select()}
+        onBlur={(event) => finish(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            finish(event.currentTarget.value, true);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            finish(null, true);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      ref={(node) => {
+        if (node && refocusRef.current) {
+          refocusRef.current = false;
+          node.focus();
+        }
+      }}
+      type="button"
+      onClick={startEditing}
+      aria-label={`Rename checklist ${title}`}
+      title="Click to rename"
+      className="hover:bg-accent/60 focus-visible:ring-ring/60 -mx-1 mb-2 block max-w-full truncate rounded px-1 py-0.5 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
+    >
+      {title}
+    </button>
+  );
+}
+
 function ChecklistBlock({
   checklist,
   boardId,
@@ -151,6 +240,7 @@ function ChecklistBlock({
   // ends without a refresh and React discards the overlay, which is the
   // rollback.
   const [items, applyReorder] = useOptimistic(checklist.items, reorder);
+  const [title, setOptimisticTitle] = useOptimistic(checklist.title);
   // Remount the composer after a successful add so the input empties.
   const [itemKey, setItemKey] = useState(0);
   const [, addAction] = useBoundAction(addChecklistItemAction, () =>
@@ -195,9 +285,32 @@ function ChecklistBlock({
     });
   }
 
+  function rename(next: string) {
+    startTransition(async () => {
+      setOptimisticTitle(next);
+      const fd = new FormData();
+      fd.set("checklistId", checklist.id);
+      fd.set("title", next);
+      const result = await renameChecklistAction(idleState, fd);
+      if (!result.ok) {
+        toast.error(
+          result.fields?.title ??
+            result.message ??
+            "Couldn't rename that checklist.",
+        );
+        return;
+      }
+      router.refresh();
+    });
+  }
+
   return (
     <div className="mb-5">
-      <p className="mb-2 text-sm font-medium">{checklist.title}</p>
+      <ChecklistTitle
+        title={title}
+        canWrite={canWrite}
+        onTitleChange={rename}
+      />
 
       <DndContext
         sensors={sensors}
@@ -226,7 +339,7 @@ function ChecklistBlock({
           <input type="hidden" name="checklistId" value={checklist.id} />
           <input type="hidden" name="boardId" value={boardId} />
           <label htmlFor={`add-item-${checklist.id}`} className="sr-only">
-            Add an item to {checklist.title}
+            Add an item to {title}
           </label>
           <Input
             id={`add-item-${checklist.id}`}

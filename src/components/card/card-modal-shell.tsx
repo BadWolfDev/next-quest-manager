@@ -26,6 +26,17 @@ export function CardModalShell({ data }: { data: CardDetailData }) {
       <DialogContent
         showCloseButton={false}
         className="nqm-skin-modal w-[calc(100vw-2rem)] max-w-[760px] gap-0 p-0 sm:max-w-[760px]"
+        onEscapeKeyDown={(event) => {
+          // Radix sees Esc (document, capture phase) before the field does. An
+          // inline editor that opts in with `data-escape-cancels` keeps the
+          // modal open so its own handler can cancel just the edit.
+          if (
+            event.target instanceof Element &&
+            event.target.closest("[data-escape-cancels]")
+          ) {
+            event.preventDefault();
+          }
+        }}
       >
         <DialogTitle className="sr-only">{data.card.title}</DialogTitle>
         <CardDetail data={data} onClose={close} />

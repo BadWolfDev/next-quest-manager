@@ -57,6 +57,13 @@ export const cardTitleSchema = z
   .min(1, "Give the card a title.")
   .max(500, "Keep it under 500 characters.");
 
+/** Shared by creating and renaming a checklist, in the UI and over MCP. */
+export const checklistTitleSchema = z
+  .string()
+  .trim()
+  .min(1, "Give the checklist a name.")
+  .max(80, "Keep it under 80 characters.");
+
 export const hexColorSchema = z
   .string()
   .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "Pick a valid colour.");

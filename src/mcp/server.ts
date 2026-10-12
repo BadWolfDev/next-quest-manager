@@ -26,6 +26,7 @@ import {
   listLabels,
   moveCard,
   moveCardToBoard,
+  renameChecklist,
   renameList,
   resolvePlacement,
   restoreBoard,
@@ -45,6 +46,7 @@ import { listAssignableMembersFor } from "@/lib/core/members";
 import type { Actor } from "@/lib/authorize";
 import { listMyWorkspaces, listWorkspaceBoards } from "@/lib/queries";
 import { AuthenticationError, AuthorizationError } from "@/lib/errors";
+import { checklistTitleSchema } from "@/lib/validation";
 
 /**
  * The Next Quest Manager MCP tool surface.
@@ -947,7 +949,7 @@ export function registerTools(server: McpServer) {
       description: "Add a checklist to a card.",
       inputSchema: z.object({
         card_id: uuid,
-        title: z.string().trim().min(1).max(80),
+        title: checklistTitleSchema,
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
     },
@@ -958,6 +960,25 @@ export function registerTools(server: McpServer) {
         opts,
       );
       return { checklist_id: checklistId, title };
+    }),
+  );
+
+  server.registerTool(
+    "rename_checklist",
+    {
+      title: "Rename checklist",
+      description:
+        "Change a checklist's title. Get checklist ids from get_card.",
+      inputSchema: z.object({
+        checklist_id: uuid,
+        title: checklistTitleSchema,
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    },
+    mutating(async ({ checklist_id, title }, { actor }) => {
+      const opts = { actor, source: "mcp" as const };
+      await renameChecklist({ checklistId: checklist_id, title }, opts);
+      return { checklist_id, title };
     }),
   );
 

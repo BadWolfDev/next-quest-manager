@@ -53,6 +53,8 @@ function sentence(entry: ActivityEntry): string {
       return `${who} assigned “${d.title ?? "a card"}”`;
     case "card.unassigned":
       return `${who} removed an assignee`;
+    case "checklist.renamed":
+      return `${who} renamed the checklist “${d.from}” to “${d.to}”`;
     case "comment.created":
       return `${who} commented on a card`;
     case "attachment.added":

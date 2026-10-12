@@ -14,6 +14,7 @@ import {
   moveCard,
   moveCardToBoard,
   moveChecklistItem,
+  renameChecklist,
   resolvePlacement,
   setCardLabel,
   toggleChecklistItem,
@@ -21,7 +22,12 @@ import {
   updateCard,
   watchCard,
 } from "@/lib/core/board-ops";
-import { cardTitleSchema, hexColorSchema, uuidSchema } from "@/lib/validation";
+import {
+  cardTitleSchema,
+  checklistTitleSchema,
+  hexColorSchema,
+  uuidSchema,
+} from "@/lib/validation";
 
 /**
  * Card detail modal actions.
@@ -238,7 +244,7 @@ export async function createChecklistAction(
       .object({
         cardId: uuidSchema,
         boardId: uuidSchema,
-        title: z.string().trim().min(1).max(80),
+        title: checklistTitleSchema,
       })
       .parse({
         cardId: formData.get("cardId"),
@@ -250,6 +256,27 @@ export async function createChecklistAction(
       { cardId: input.cardId, title: input.title },
       { source: "ui" },
     );
+    revalidatePath(boardPath(boardId));
+    return { ok: true };
+  } catch (error) {
+    return toActionError(error);
+  }
+}
+
+/** Rename a checklist in place, from its inline title editor. */
+export async function renameChecklistAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const input = z
+      .object({ checklistId: uuidSchema, title: checklistTitleSchema })
+      .parse({
+        checklistId: formData.get("checklistId"),
+        title: formData.get("title"),
+      });
+
+    const { boardId } = await renameChecklist(input, { source: "ui" });
     revalidatePath(boardPath(boardId));
     return { ok: true };
   } catch (error) {
